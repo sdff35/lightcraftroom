@@ -81,10 +81,10 @@ pub struct Library {
     pub report: LoadReport,
     /// Last persistence error (shown by the UI; ops stay pending and are retried).
     pub last_error: Option<String>,
-    /// Why the last append of queued ops failed; `None` once a save succeeds. While set, changes
+    /// Why the last save of queued ops or presets failed; `None` once a save succeeds. While set, changes
     /// exist only in memory ([`Session::unsaved`]).
     pub unsaved_error: Option<String>,
-    /// When the frame loop may retry a failed append ([`Session::persist_if_dirty`] backs off).
+    /// When the frame loop may retry a failed save ([`Session::persist_if_dirty`] backs off).
     retry_at: Option<web_time::Instant>,
     /// What forgetting untouched Local records did when the library opened.
     pub forgot_local: Option<lightcraft_catalog::ForgetPlan>,
@@ -100,6 +100,26 @@ pub struct Library {
     /// Keeps other processes out of this library while it's open (last: released after the
     /// journal's background snapshot has landed).
     lock: Option<LibraryLock>,
+}
+
+impl Library {
+    fn not_saved(&mut self, reason: String) -> EngineError {
+        log::error!("library: {reason}");
+        self.last_error = Some(reason.clone());
+        self.unsaved_error = Some(reason.clone());
+        self.retry_at = Some(web_time::Instant::now() + RETRY_BACKOFF);
+        EngineError::NotSaved(reason)
+    }
+
+    fn saved(&mut self) {
+        if let Some(error) = self.unsaved_error.take() {
+            if self.last_error.as_ref() == Some(&error) {
+                self.last_error = None;
+            }
+            log::info!("library: pending changes written to disk");
+        }
+        self.retry_at = None;
+    }
 }
 
 /// Where a library's files live (see [`Session::open_library_in`]).
@@ -118,6 +138,8 @@ pub struct LibraryStores {
 #[serde(default, rename_all = "camelCase")]
 struct PresetsFile {
     user: Vec<Preset>,
+    /// Missing in older files; recovered from their numeric user IDs.
+    next_user_id: u64,
     favorites: Vec<String>,
     /// Favourite profiles, and the recently applied ones (newest first).
     profile_favorites: Vec<String>,
@@ -129,8 +151,9 @@ struct PresetsFile {
 /// collection presets.json is ~40 MB, and serializing it after every command made each slider
 /// tick take seconds.
 #[derive(Default)]
-struct PresetsSaved {
+pub(crate) struct PresetsSaved {
     generation: u64,
+    next_user_id: u64,
     profile_favorites: Vec<String>,
     profile_recent: Vec<String>,
     /// Hash of the bytes written: a list borrowed mutably but left as it was isn't rewritten.
@@ -138,9 +161,10 @@ struct PresetsSaved {
 }
 
 impl PresetsSaved {
-    fn state_of(s: &Session) -> PresetsSaved {
+    pub(crate) fn state_of(s: &Session) -> PresetsSaved {
         PresetsSaved {
             generation: s.presets.generation(),
+            next_user_id: s.next_preset_id,
             profile_favorites: s.profile_favorites.clone(),
             profile_recent: s.profile_recent.clone(),
             hash: 0,
@@ -148,8 +172,11 @@ impl PresetsSaved {
     }
 
     /// `s` changed its presets or profile lists since this state.
-    fn differs(&self, s: &Session) -> bool {
-        self.generation != s.presets.generation() || self.profile_favorites != s.profile_favorites || self.profile_recent != s.profile_recent
+    pub(crate) fn differs(&self, s: &Session) -> bool {
+        self.generation != s.presets.generation()
+            || self.next_user_id != s.next_preset_id
+            || self.profile_favorites != s.profile_favorites
+            || self.profile_recent != s.profile_recent
     }
 }
 
@@ -258,6 +285,7 @@ fn presets_json(s: &Session) -> String {
     let presets = &s.presets;
     let f = PresetsFile {
         user: presets.iter().filter(|p| !p.builtin).cloned().collect(),
+        next_user_id: s.next_preset_id,
         favorites: presets.iter().filter(|p| p.builtin && p.favorite).map(|p| p.id.clone()).collect(),
         profile_favorites: s.profile_favorites.clone(),
         profile_recent: s.profile_recent.clone(),
@@ -291,6 +319,13 @@ fn program_name() -> String {
     match exe.as_deref() {
         Some("lightcraft") | None => "LightCraft".into(),
         Some(other) => other.to_string(),
+    }
+}
+
+fn lock_error(error: lightcraft_catalog::LockError) -> EngineError {
+    match error {
+        lightcraft_catalog::LockError::InUse(_) => EngineError::LibraryInUse(error.to_string()),
+        lightcraft_catalog::LockError::Unavailable { .. } => EngineError::Other(error.to_string()),
     }
 }
 
@@ -393,7 +428,7 @@ impl Session {
         // the library open in this session keeps its lock when reopened; any other must be free
         let current = self.library.as_ref().is_some_and(|l| l.on_disk && same_dir(&l.dir, &dir));
         if !current && is_library(&dir) {
-            drop(LibraryLock::acquire(&dir, &program_name()).map_err(|e| EngineError::LibraryInUse(e.to_string()))?);
+            drop(LibraryLock::acquire(&dir, &program_name()).map_err(lock_error)?);
         }
         Ok(dir)
     }
@@ -422,7 +457,7 @@ impl Session {
         let reusing = reused.is_some();
         let mut lock = match reused {
             Some(l) => Some(l),
-            None => Some(LibraryLock::acquire(&dir, &program_name()).map_err(|e| EngineError::LibraryInUse(e.to_string()))?),
+            None => Some(LibraryLock::acquire(&dir, &program_name()).map_err(lock_error)?),
         };
         if let Err(e) = self.open_stores(stores, seed_demo, &mut lock) {
             if reusing && let Some(lib) = self.library.as_mut() {
@@ -521,16 +556,34 @@ impl Session {
         if let Some(d) = &self.smart_previews_dir {
             self.media.smart_dir = Some(d.clone());
         }
-        // presets
+        // Presets belong to this library. In particular, reopening must not mistake the old
+        // in-memory list for duplicate IDs in the file and manufacture additional copies.
+        self.presets = crate::presets::PresetList::new(crate::presets::builtin());
+        self.next_preset_id = 1;
+        self.profile_favorites.clear();
+        self.profile_recent.clear();
+        let mut repaired_presets = false;
         if let Some(f) = settings.read::<PresetsFile>(files.as_mut(), "presets.json") {
+            let highest = f.user.iter().filter_map(|p| p.id.strip_prefix("user.")?.split('.').next()?.parse::<u64>().ok()).max();
+            self.next_preset_id = f.next_user_id.max(highest.map_or(1, |n| n.saturating_add(1))).max(1);
             for p in &mut self.presets {
                 p.favorite = p.builtin && f.favorites.contains(&p.id) || (!p.builtin && p.favorite);
             }
             let mut ids: std::collections::HashSet<String> = self.presets.iter().map(|p| p.id.clone()).collect();
-            for u in f.user {
-                if ids.insert(u.id.clone()) {
-                    self.presets.push(u);
+            let mut reserved = ids.clone();
+            reserved.extend(f.user.iter().map(|p| p.id.clone()));
+            for mut u in f.user {
+                if u.id.trim().is_empty() || !ids.insert(u.id.clone()) {
+                    u.id = self.next_user_preset_id(&reserved)?;
+                    reserved.insert(u.id.clone());
+                    ids.insert(u.id.clone());
+                    repaired_presets = true;
                 }
+                u.builtin = false;
+                self.presets.push(u);
+            }
+            if repaired_presets {
+                settings.warnings.push("Duplicate or empty preset IDs were repaired. All user presets were kept with distinct IDs.".into());
             }
             let known = |id: &String| crate::presets::profile(id).is_some() || self.lut_profiles.iter().any(|p| &p.id == id);
             self.profile_favorites = f.profile_favorites.into_iter().filter(known).collect();
@@ -561,7 +614,10 @@ impl Session {
             self.selection = Selection::single(*first);
         }
         // presets.json is as read: saved again only after the list changes (hash 0 = unknown bytes)
-        let presets_saved = PresetsSaved::state_of(self);
+        let mut presets_saved = PresetsSaved::state_of(self);
+        if repaired_presets {
+            presets_saved.generation = 0; // write the repair; a failure remains dirty and visible
+        }
         // photo ids are per library: drop decoded sources of the previous one
         self.media.clear_sources();
         if on_disk {
@@ -581,7 +637,7 @@ impl Session {
             forgot_local: None,
             presets_saved,
             view_written,
-            settings_warnings: unlocked_warning(lock.as_ref()).into_iter().chain(settings.warnings).collect(),
+            settings_warnings: settings.warnings,
             warnings_reported: 0,
             blocked: settings.blocked,
             lock: lock.take(),
@@ -609,25 +665,16 @@ impl Session {
 
     /// Write pending ops to the log (fsynced), compact when due, and save changed presets.
     /// Called after every top-level command; cheap when nothing changed. Fails (with
-    /// [`EngineError::NotSaved`]) only when the queued ops couldn't be written; they stay queued.
+    /// [`EngineError::NotSaved`]) when queued ops or changed presets couldn't be written;
+    /// they remain pending for the next save.
     pub fn persist(&mut self) -> Result<()> {
         let Some(lib) = self.library.as_mut() else { return Ok(()) };
         if !self.pending_log.is_empty() {
             if let Err(e) = lib.journal.append(&self.pending_log) {
                 // the ops stay queued (and applied in memory): the next persist retries them
-                let reason = e.to_string();
-                log::error!("library: {} change(s) not written to disk: {reason}", self.pending_log.len());
-                lib.last_error = Some(reason.clone());
-                lib.unsaved_error = Some(reason.clone());
-                lib.retry_at = Some(web_time::Instant::now() + RETRY_BACKOFF);
-                return Err(EngineError::NotSaved(reason));
+                return Err(lib.not_saved(e.to_string()));
             }
-            if lib.unsaved_error.take().is_some() {
-                log::info!("library: queued changes written to disk");
-            }
-            lib.retry_at = None;
             self.pending_log.clear();
-            lib.last_error = None;
         }
         poll_compaction(lib);
         // Never snapshot mid-interaction: the catalog then holds an uncommitted preview value.
@@ -641,9 +688,17 @@ impl Session {
             log::error!("library: compaction: {e}");
             lib.last_error = Some(format!("compaction: {e}"));
         }
-        let due = self.library.as_ref().is_some_and(|l| l.presets_saved.differs(self) && !l.blocked.contains(&"presets.json"));
+        let due = self.library.as_ref().is_some_and(|l| l.presets_saved.differs(self));
         if !due {
+            if let Some(lib) = self.library.as_mut() {
+                lib.saved();
+            }
             return Ok(());
+        }
+        if let Some(lib) = self.library.as_mut()
+            && lib.blocked.contains(&"presets.json")
+        {
+            return Err(lib.not_saved("presets.json could not be read or preserved when opening the library; refusing to overwrite it".into()));
         }
         let presets = presets_json(self);
         let mut state = PresetsSaved::state_of(self);
@@ -653,18 +708,20 @@ impl Session {
             lib.presets_saved = state;
         } else if let Err(e) = lib.files.write_atomic("presets.json", presets.as_bytes()) {
             // the state stays stale: the next save tries again
-            log::error!("library: presets: {e}");
+            return Err(lib.not_saved(format!("presets.json: {e}")));
         } else {
             lib.presets_saved = state;
         }
+        lib.saved();
         Ok(())
     }
 
-    /// Persist if commands left ops pending (cheap; frontends call it once per frame for state
+    /// Persist if ops or presets are pending (cheap; frontends call it once per frame for state
     /// changed outside [`Session::execute`]).
     pub fn persist_if_dirty(&mut self) {
         let backing_off = self.library.as_ref().and_then(|l| l.retry_at).is_some_and(|t| web_time::Instant::now() < t);
-        if self.library.is_some() && !self.pending_log.is_empty() && !backing_off {
+        let dirty = !self.pending_log.is_empty() || self.library.as_ref().is_some_and(|l| l.presets_saved.differs(self));
+        if self.library.is_some() && dirty && !backing_off {
             let _ = self.persist();
         } else if let Some(lib) = self.library.as_mut() {
             poll_compaction(lib);
@@ -672,18 +729,19 @@ impl Session {
     }
 
     /// Changes applied in memory but not yet written to disk because saving failed: the number of
-    /// queued ops and why (`None` when everything is saved, or no library is open). Retried by
+    /// queued ops plus one for pending presets, and why (`None` when everything is saved, or no library is open). Retried by
     /// every command and by [`Session::persist_if_dirty`].
     pub fn unsaved(&self) -> Option<(usize, &str)> {
         let lib = self.library.as_ref()?;
-        lib.unsaved_error.as_deref().filter(|_| !self.pending_log.is_empty()).map(|e| (self.pending_log.len(), e))
+        let count = self.pending_log.len() + usize::from(lib.presets_saved.differs(self));
+        lib.unsaved_error.as_deref().filter(|_| count > 0).map(|e| (count, e))
     }
 
     /// Flush everything and write a snapshot (on quit). Ends an open interaction first.
     ///
     /// The snapshot is written even when appending the queued ops fails: it is a fresh file
-    /// holding everything in memory, so it saves those ops too (the log handle may be the only
-    /// thing that's broken). Fails only if nothing could be saved; the ops then stay queued.
+    /// holding the catalog in memory, so it saves those ops too (the log handle may be the only
+    /// thing that's broken). It cannot save presets: their write failure still prevents closing.
     pub fn close_library(&mut self) -> Result<()> {
         if self.library.is_none() {
             return Ok(());
@@ -692,6 +750,7 @@ impl Session {
         let persisted = self.persist();
         self.save_view();
         let unlogged = if persisted.is_err() { self.pending_log.len() as u64 } else { 0 };
+        let presets_pending = self.library.as_ref().is_some_and(|l| l.presets_saved.differs(self));
         let Some(lib) = self.library.as_mut() else { return Ok(()) };
         let before = lib.journal.seq();
         let snapshot = lib.journal.snapshot_with_unlogged(&self.catalog, unlogged);
@@ -699,11 +758,12 @@ impl Session {
             // the snapshot holds the queued ops: they are saved, never append them again
             log::info!("library: {unlogged} queued change(s) saved in the closing snapshot");
             self.pending_log.clear();
-            lib.unsaved_error = None;
-            lib.retry_at = None;
-            lib.last_error = None;
+            if !presets_pending {
+                lib.saved();
+            }
         }
         let result = match (persisted, snapshot) {
+            (Err(e @ EngineError::NotSaved(_)), Ok(())) if presets_pending => Err(e),
             (_, Ok(())) => Ok(()),
             // neither the log nor the snapshot took the queued ops
             (Err(EngineError::NotSaved(e)), Err(s)) if lib.journal.seq() == before => Err(EngineError::NotSaved(format!("{e}; snapshot: {s}"))),
@@ -839,21 +899,33 @@ impl Session {
     }
 }
 
-/// The warning for a library opened without its one-program-at-a-time lock (issue #171): its
-/// file system can't lock `catalog.lock` (some network shares). It opens anyway, as documented —
-/// refusing would lock the user out — but the user must learn that a second program could open it.
-fn unlocked_warning(lock: Option<&LibraryLock>) -> Option<String> {
-    lock.filter(|l| !l.held()).map(|_| {
-        "This library could not be locked (its catalog.lock file can't be locked where it is stored, e.g. on some network \
-         shares), so it is open without protection against a second program: use it in one LightCraft app or command at \
-         a time, or changes made in one of them can be lost."
-            .to_string()
-    })
-}
-
 #[cfg(test)]
 mod resolve_tests {
     use super::*;
+
+    #[test]
+    fn failed_preset_write_is_retried_by_the_frame_loop_after_backoff() {
+        let dir = std::env::temp_dir().join(format!("lc-preset-retry-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut s = Session::new();
+        s.open_library(&dir, true).unwrap();
+        let path = dir.join("presets.json");
+        std::fs::create_dir(&path).unwrap(); // atomic rename cannot replace this directory
+        assert!(matches!(s.execute("preset.create", &serde_json::json!({"name": "Retry me"})), Err(EngineError::NotSaved(_))));
+        std::fs::remove_dir(&path).unwrap();
+        s.persist_if_dirty();
+        assert!(!path.exists(), "wait before retrying on every frame");
+        s.library.as_mut().unwrap().retry_at = Some(web_time::Instant::now() - RETRY_BACKOFF);
+        s.persist_if_dirty();
+        assert!(s.unsaved().is_none());
+        assert!(path.is_file(), "the frame loop retried without another command");
+        drop(s);
+        let mut reopened = Session::new();
+        reopened.open_library(&dir, false).unwrap();
+        assert!(reopened.presets.iter().any(|p| p.name == "Retry me"));
+        drop(reopened);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     /// `--library <dir>/catalog.snap` failed with the OS's "File exists" (creating a folder over
     /// the file); it opens the library that file belongs to.

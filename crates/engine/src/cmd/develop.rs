@@ -995,7 +995,8 @@ pub fn specs() -> Vec<CommandSpec> {
             let group = str_param(p, "group").unwrap_or("User Presets");
             let groups = groups_param(p, c)?.unwrap_or_else(SettingsGroup::default_copy);
             let d = s.develop_of(id).unwrap_or_default();
-            let pid = format!("user.{}.{}", s.presets.len(), name.to_lowercase().replace(' ', "-"));
+            let ids = s.presets.iter().map(|p| p.id.clone()).collect();
+            let pid = s.next_user_preset_id(&ids)?;
             s.presets.push(Preset::from_settings(&pid, name, group, &d, &groups));
             Ok(json!({"id": pid}))
         }),

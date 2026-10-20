@@ -89,28 +89,35 @@ fn unreadable_settings_are_not_overwritten() {
     assert!(warnings.iter().all(|w| w.contains("couldn't be read") && w.contains("won't overwrite")), "{warnings:?}");
 
     // a preset change and a preference change: neither file is replaced by defaults
-    s.execute("preset.create", &json!({"name": "New"})).unwrap();
+    assert!(matches!(s.execute("preset.create", &json!({"name": "New"})), Err(crate::EngineError::NotSaved(_))));
+    assert!(s.unsaved().is_some());
+    assert!(s.close_library().is_err(), "blocked presets must not be reported saved by a catalog snapshot");
     let e = s.execute("library.preferences", &json!({"cacheMb": 300}));
     assert!(e.is_err(), "saving preferences is refused, not done over the unread file");
     assert_eq!(files.files.get("presets.json").unwrap(), presets);
     assert_eq!(files.files.get("prefs.json").unwrap(), prefs);
 }
 
-/// Issue #171: a library whose `catalog.lock` can't be locked (stood in for here by a directory
-/// of that name, which takes the same path as a file system without locks) still opens, and the
-/// user is told it is unprotected — in `library.info` and once through the library warnings the
-/// app's notices and the CLI show. A normally locked library says nothing.
+/// LC-03 replaces the issue #171 fallback: an unprotectable library must never open writable.
 #[test]
-fn an_unlockable_library_opens_with_a_warning() {
+fn an_unlockable_library_is_refused_without_touching_the_catalog() {
     let lib = temp_dir("unlocked");
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, true).unwrap();
+    s.close_library().unwrap();
+    drop(s);
+    let snapshot = std::fs::read(lib.join("catalog.snap")).unwrap();
+    let log = std::fs::read(lib.join("catalog.log")).unwrap();
+    std::fs::remove_file(lib.join("catalog.lock")).unwrap();
     std::fs::create_dir_all(lib.join("catalog.lock")).unwrap();
     let mut s = Session::new().with_fs();
-    s.open_library(&lib, false).unwrap();
-    let info = s.execute("library.info", &json!({})).unwrap();
-    let listed = info["settingsWarnings"].as_array().cloned().unwrap_or_default();
-    assert!(listed.iter().any(|w| w.as_str().is_some_and(|w| w.contains("without protection against a second program"))), "{info}");
-    let warnings = s.take_library_warnings();
-    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(s.check_library(&lib).is_err());
+    let e = s.open_library(&lib, false).unwrap_err();
+    assert!(e.to_string().contains("catalog.lock"), "{e}");
+    assert!(!matches!(e, crate::EngineError::LibraryInUse(_)), "an I/O failure is not another owner");
+    assert!(s.library.is_none());
+    assert_eq!(std::fs::read(lib.join("catalog.snap")).unwrap(), snapshot);
+    assert_eq!(std::fs::read(lib.join("catalog.log")).unwrap(), log);
     drop(s);
     // the same library with a lockable lock file: no warning
     std::fs::remove_dir_all(lib.join("catalog.lock")).unwrap();
@@ -119,4 +126,53 @@ fn an_unlockable_library_opens_with_a_warning() {
     assert!(s.take_library_warnings().is_empty());
     drop(s);
     let _ = std::fs::remove_dir_all(&lib);
+}
+
+#[test]
+fn duplicate_preset_ids_are_repaired_without_losing_presets_and_stay_stable() {
+    let lib = temp_dir("duplicate-presets");
+    let user = [
+        json!({"id": "user.42.b", "name": "First B", "group": "User", "settings": {"light": {"exposure": 1}}, "favorite": true}),
+        json!({"id": "user.42.b", "name": "Second B", "group": "Other", "settings": {"light": {"exposure": 2}}}),
+        json!({"id": "user.43", "name": "Reserved", "group": "User", "settings": {}}),
+        json!({"id": "lc.warm-glow", "name": "Builtin collision", "group": "User", "settings": {}, "builtin": true}),
+    ];
+    std::fs::write(lib.join("presets.json"), serde_json::to_vec(&json!({"user": user})).unwrap()).unwrap();
+    let mut s = Session::new();
+    s.open_library(&lib, true).unwrap();
+    let presets: Vec<_> = s.presets.iter().filter(|p| !p.builtin).cloned().collect();
+    assert_eq!(presets.len(), user.len(), "no duplicate may be silently dropped");
+    assert_eq!(presets[0].id, "user.42.b", "keep the first occurrence's existing references");
+    assert!(presets[0].favorite);
+    for (p, old) in presets.iter().zip(&user) {
+        assert_eq!(p.name, old["name"]);
+        assert_eq!(p.group, old["group"]);
+        assert_eq!(p.settings, old["settings"]);
+    }
+    let ids: std::collections::HashSet<_> = s.presets.iter().map(|p| &p.id).collect();
+    assert_eq!(ids.len(), s.presets.len());
+    assert!(s.take_library_warnings().iter().any(|w| w.contains("preset IDs were repaired")));
+    s.close_library().unwrap();
+    // Reopening the same Session must not manufacture more "duplicate" copies.
+    s.open_library(&lib, false).unwrap();
+    assert_eq!(s.presets.iter().filter(|p| !p.builtin).cloned().collect::<Vec<_>>(), presets);
+    drop(s);
+    let mut reopened = Session::new();
+    reopened.open_library(&lib, false).unwrap();
+    assert_eq!(reopened.presets.iter().filter(|p| !p.builtin).cloned().collect::<Vec<_>>(), presets);
+    assert!(reopened.take_library_warnings().is_empty());
+    drop(reopened);
+    std::fs::remove_dir_all(lib).unwrap();
+}
+
+#[test]
+fn exhausted_preset_counter_refuses_creation_instead_of_wrapping() {
+    let files = MemStore::new();
+    files.set("presets.json", serde_json::to_vec(&json!({"nextUserId": u64::MAX})).unwrap());
+    let stores = LibraryStores { dir: "exhausted".into(), catalog: Box::new(MemStore::new()), files: Box::new(files), on_disk: false };
+    let mut s = Session::new();
+    s.open_library_in(stores, true).unwrap();
+    let count = s.presets.len();
+    assert!(s.execute("preset.create", &json!({"name": "No room"})).unwrap_err().to_string().contains("counter exhausted"));
+    assert_eq!(s.presets.len(), count);
 }

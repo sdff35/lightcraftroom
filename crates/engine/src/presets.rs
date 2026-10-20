@@ -171,6 +171,19 @@ pub fn expand_preset_paths(paths: &[String]) -> Vec<String> {
 }
 
 impl Session {
+    /// Allocate an ID from the library's durable counter, independent of list length and name.
+    /// `reserved` also includes IDs not loaded yet during repair of an older presets.json.
+    pub(crate) fn next_user_preset_id(&mut self, reserved: &std::collections::HashSet<String>) -> crate::Result<String> {
+        loop {
+            let n = self.next_preset_id;
+            self.next_preset_id = n.checked_add(1).ok_or_else(|| crate::EngineError::Other("preset ID counter exhausted".into()))?;
+            let id = format!("user.{n}");
+            if !reserved.contains(&id) {
+                return Ok(id);
+            }
+        }
+    }
+
     /// Add imported presets. Identical presets (same name, group and settings) already present are
     /// skipped; id clashes get a fresh id. Returns the ids added.
     pub fn add_presets(&mut self, presets: Vec<Preset>) -> Vec<String> {

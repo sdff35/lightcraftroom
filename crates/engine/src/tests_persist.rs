@@ -67,6 +67,102 @@ fn open(store: &Flaky, seed: bool) -> Session {
     s
 }
 
+fn open_with_presets(catalog: &Flaky, files: &Flaky) -> Session {
+    let mut s = Session::new();
+    let stores = LibraryStores { dir: "presets".into(), catalog: Box::new(catalog.clone()), files: Box::new(files.clone()), on_disk: false };
+    s.open_library_in(stores, true).unwrap();
+    s
+}
+
+#[test]
+fn failed_presets_save_is_reported_and_retried_without_catalog_ops() {
+    let catalog = Flaky::default();
+    let files = Flaky::default();
+    let mut s = open_with_presets(&catalog, &files);
+    let first = s.execute("preset.create", &json!({"name": "Saved"})).unwrap()["id"].clone();
+    let saved = files.files.get("presets.json").unwrap();
+    files.set_failing(true);
+    let e = s.execute("preset.create", &json!({"name": "Pending"})).unwrap_err();
+    assert!(matches!(e, EngineError::NotSaved(_)), "{e:?}");
+    assert!(s.pending_log.is_empty(), "presets have no catalog ops");
+    assert_eq!(s.unsaved().map(|u| u.0), Some(1));
+    let info = s.execute("library.info", &json!({})).unwrap();
+    assert!(info["unsavedError"].as_str().unwrap().contains("presets.json"), "{info}");
+    assert!(info["lastError"].as_str().unwrap().contains("disk full"), "{info}");
+    assert_eq!(files.files.get("presets.json").unwrap(), saved);
+    // A catalog save must not erase the outstanding presets error.
+    s.execute("photo.rate", &json!({"rating": 4})).unwrap_err();
+    assert_eq!(s.unsaved().map(|u| u.0), Some(1));
+    assert!(s.close_library().is_err(), "a catalog snapshot cannot save presets");
+    assert!(s.unsaved().is_some());
+    files.set_failing(false);
+    s.persist().unwrap();
+    assert!(s.unsaved().is_none());
+    assert!(s.library.as_ref().unwrap().last_error.is_none());
+    drop(s);
+    let mut reopened = open_with_presets(&catalog, &files);
+    assert!(reopened.presets.iter().any(|p| p.id == first.as_str().unwrap()));
+    assert!(reopened.presets.iter().any(|p| p.name == "Pending"));
+    reopened.close_library().unwrap();
+}
+
+#[test]
+fn frame_loop_saves_presets_changed_outside_commands() {
+    let catalog = Flaky::default();
+    let files = Flaky::default();
+    let mut s = open_with_presets(&catalog, &files);
+    s.presets[0].favorite = true;
+    s.persist_if_dirty();
+    assert!(files.files.get("presets.json").is_some(), "a preset-only change is dirty too");
+    drop(s);
+    assert!(open_with_presets(&catalog, &files).presets[0].favorite);
+}
+
+#[test]
+fn closing_snapshot_does_not_hide_unsaved_presets_when_it_recovers_catalog_ops() {
+    let catalog = Flaky { appends_only: true, ..Default::default() };
+    let files = Flaky::default();
+    let mut s = open_with_presets(&catalog, &files);
+    catalog.set_failing(true);
+    files.set_failing(true);
+    s.execute("photo.rate", &json!({"rating": 4})).unwrap_err();
+    s.execute("preset.create", &json!({"name": "Pending"})).unwrap_err();
+    assert!(matches!(s.close_library(), Err(EngineError::NotSaved(_))));
+    assert!(s.pending_log.is_empty(), "the snapshot recovered the catalog ops");
+    assert_eq!(s.unsaved().map(|u| u.0), Some(1), "presets still need saving");
+    files.set_failing(false);
+    s.close_library().unwrap();
+    assert!(s.unsaved().is_none());
+    drop(s);
+    assert!(open_with_presets(&catalog, &files).presets.iter().any(|p| p.name == "Pending"));
+}
+
+#[test]
+fn preset_ids_survive_deletions_and_reopening_without_reuse() {
+    let catalog = Flaky::default();
+    let files = Flaky::default();
+    let mut s = open_with_presets(&catalog, &files);
+    let mut issued = std::collections::HashSet::new();
+    let a = s.execute("preset.create", &json!({"name": "A"})).unwrap()["id"].clone();
+    issued.insert(a.clone());
+    let b = s.execute("preset.create", &json!({"name": "B"})).unwrap()["id"].clone();
+    issued.insert(b.clone());
+    s.execute("preset.delete", &json!({"id": a})).unwrap();
+    let c = s.execute("preset.create", &json!({"name": "B"})).unwrap()["id"].clone();
+    assert!(issued.insert(c.clone()), "create/delete/create must not duplicate an ID");
+    s.execute("preset.rename", &json!({"id": c, "name": "C"})).unwrap();
+    assert_eq!(s.presets.iter().find(|p| p.id == b.as_str().unwrap()).unwrap().name, "B");
+    for id in [b, c] {
+        s.execute("preset.delete", &json!({"id": id})).unwrap();
+    }
+    drop(s);
+    let mut reopened = open_with_presets(&catalog, &files);
+    for name in ["A", "B", "B"] {
+        let id = reopened.execute("preset.create", &json!({"name": name})).unwrap()["id"].clone();
+        assert!(issued.insert(id), "deleted IDs must stay retired after reopening");
+    }
+}
+
 #[test]
 fn failed_append_fails_the_command_and_is_retried() {
     let store = Flaky::default();

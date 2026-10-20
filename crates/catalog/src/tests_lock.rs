@@ -62,6 +62,21 @@ fn leftover_lock_files_are_not_a_lock() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn an_unopenable_lock_file_refuses_every_writer() {
+    let dir = temp_dir("unopenable");
+    std::fs::create_dir(dir.join(LOCK)).unwrap();
+    for program in ["LightCraft", "lightcraft-cli"] {
+        assert!(LibraryLock::acquire(&dir, program).is_err(), "never open without an exclusive lock");
+    }
+    assert!(!dir.join(OWNER).exists());
+    std::fs::remove_dir(dir.join(LOCK)).unwrap();
+    let lock = LibraryLock::acquire(&dir, "LightCraft").unwrap();
+    assert!(lock.held());
+    drop(lock);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// Another process holds the lock; when it is killed (a crash), the OS releases it.
 #[test]
 fn lock_held_by_another_process_is_released_when_it_dies() {

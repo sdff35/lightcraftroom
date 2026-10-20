@@ -105,8 +105,8 @@ pub enum EngineError {
     BadParams { cmd: String, msg: String },
     #[error("{0}")]
     Catalog(#[from] lightcraft_catalog::CatalogError),
-    /// The command's change is applied (in memory, undoable) but its journal records could not
-    /// be written. They stay queued and are written by the next successful save.
+    /// The command's change is applied in memory but its journal records or presets could not
+    /// be written. They stay pending and are written by the next successful save.
     #[error("saved in memory but not written to disk: {0}; LightCraft will retry")]
     NotSaved(String),
     /// Another process (the app, `lightcraft-cli`, another computer) has the library open.
@@ -274,6 +274,8 @@ pub struct Session {
     pub copy_groups: Vec<lightcraft_develop::SettingsGroup>,
     /// Built-in then user presets; its generation tells savers and caches when it changed.
     pub presets: presets::PresetList,
+    /// Next local preset ID; persisted even after every user preset has been deleted.
+    pub(crate) next_preset_id: u64,
     /// Favourite profile ids (persisted with the library, like preset favourites).
     pub profile_favorites: Vec<String>,
     /// Recently applied profile ids, newest first (at most [`presets::RECENT_PROFILES`]).
@@ -451,6 +453,7 @@ impl Session {
             previous_active: None,
             copy_groups: lightcraft_develop::SettingsGroup::default_copy(),
             presets: presets::PresetList::new(presets::builtin()),
+            next_preset_id: 1,
             profile_favorites: Vec::new(),
             profile_recent: Vec::new(),
             journal: Vec::new(),
@@ -541,6 +544,7 @@ impl Session {
 
     fn run_command(&mut self, id: &str, journal: Option<&Value>, f: impl FnOnce(&mut Session) -> Result<Value>) -> Result<Value> {
         let log_start = self.pending_log.len();
+        let presets_start = library::PresetsSaved::state_of(self);
         let was_active = self.active();
         self.depth += 1;
         // last-resort guard: a panic in a command is that command's error, not a crash
@@ -573,7 +577,7 @@ impl Session {
             // queued, and the next save (any later command, or the frame loop) retries it. Other
             // persistence trouble (a failed compaction, an older queued change still unwritten by
             // a command that changed nothing) doesn't fail the command; `library.info` reports it.
-            let produced = self.pending_log.len() > log_start;
+            let produced = self.pending_log.len() > log_start || presets_start.differs(self);
             if let Err(e @ EngineError::NotSaved(_)) = self.persist()
                 && produced
                 && r.is_ok()

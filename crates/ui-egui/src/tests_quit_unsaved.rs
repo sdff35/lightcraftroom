@@ -126,3 +126,29 @@ fn damaged_settings_file_is_shown() {
     h.step();
     assert!(!has(&h, "button:noticeOk"));
 }
+
+#[test]
+fn quitting_with_unsaved_presets_asks_and_retry_saves_them() {
+    let files = Unplugged::default();
+    let catalog = MemStore::new();
+    let mut s = lightcraft_engine::Session::new();
+    let stores = LibraryStores { dir: "presets".into(), catalog: Box::new(catalog.clone()), files: Box::new(files.clone()), on_disk: false };
+    s.open_library_in(stores, true).unwrap();
+    let app = LightcraftApp::new(s, Services { png: None, ..Default::default() });
+    let mut h = Headless::new(app, [1200.0, 800.0], 1.0);
+    h.step();
+    files.fail.store(true, Ordering::SeqCst);
+    let r = h.request("engine.execute", json!({"command": "preset.create", "params": {"name": "Keep this preset"}}), T);
+    assert_eq!(r["ok"], false, "{r}");
+    assert!(!crate::panels::notices::may_close(&mut h.app), "a catalog snapshot cannot save presets");
+    h.step();
+    assert!(has(&h, "button:quitRetry"));
+    files.fail.store(false, Ordering::SeqCst);
+    click(&mut h, "button:quitRetry");
+    assert!(h.app.session.unsaved().is_none());
+    assert!(h.app.quit_prompt.is_none());
+    let stores = LibraryStores { dir: "presets".into(), catalog: Box::new(catalog), files: Box::new(files), on_disk: false };
+    let mut reopened = lightcraft_engine::Session::new();
+    reopened.open_library_in(stores, false).unwrap();
+    assert!(reopened.presets.iter().any(|p| p.name == "Keep this preset"));
+}

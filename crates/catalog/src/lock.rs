@@ -19,9 +19,8 @@
 //! - Who holds it (process id, computer, program, version) is written to `catalog.lock.owner`, for
 //!   the error message. It's a separate file because a Windows lock also blocks reading the
 //!   locked file. It's only a hint: it may be missing or left over from a crash.
-//! - File systems without lock support (some network shares): the library opens unlocked, with a
-//!   warning — refusing it would lock the user out of their own library. Locks over SMB/NFS are
-//!   advisory and depend on the server; the owner file is then the only hint.
+//! - If the lock file can't be opened or the file system can't lock it, opening fails. A warning
+//!   cannot protect edits from a second writer. Locks over SMB/NFS still depend on the server.
 //! - Browser storage (OPFS) has no file locks: see the web host for its own guard.
 
 use std::fs::{File, OpenOptions, TryLockError};
@@ -85,6 +84,13 @@ pub enum LockError {
     /// Another process has the library open.
     #[error("This library is already open in {}. Close it there first.", .0.as_ref().map(LockOwner::describe).unwrap_or_else(|| "another LightCraft program".into()))]
     InUse(Option<LockOwner>),
+    /// Exclusive access could not be established; the library must not open writable.
+    #[error("Cannot safely open this library: can't lock {}: {source}. Check the lock file's permissions and use storage that supports exclusive file locks.", path.display())]
+    Unavailable {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
 }
 
 /// The exclusive lock on a library directory; released on drop (and by the OS if the process
@@ -92,29 +98,25 @@ pub enum LockError {
 #[derive(Debug)]
 pub struct LibraryLock {
     dir: PathBuf,
-    /// `None` when the file system can't lock (the library is open unlocked).
-    file: Option<File>,
-    held: bool,
+    file: File,
 }
 
 impl LibraryLock {
-    /// Lock `dir` (which must exist) for this process. Fails only when another process holds it.
+    /// Lock `dir` (which must exist) for this process. Fails unless exclusive access is secured.
     pub fn acquire(dir: &Path, program: &str) -> Result<LibraryLock, LockError> {
-        let unlocked = |why: io::Error| {
-            log::warn!("library {}: can't lock {LOCK} ({why}); opening it without protection against a second program", dir.display());
-            LibraryLock { dir: dir.to_path_buf(), file: None, held: false }
-        };
-        let file = match OpenOptions::new().read(true).write(true).create(true).truncate(false).open(dir.join(LOCK)) {
-            Ok(f) => f,
-            Err(e) => return Ok(unlocked(e)),
-        };
-        match file.try_lock() {
+        Self::acquire_using(dir, program, File::try_lock)
+    }
+
+    fn acquire_using(dir: &Path, program: &str, try_lock: impl FnOnce(&File) -> Result<(), TryLockError>) -> Result<LibraryLock, LockError> {
+        let unavailable = |source| LockError::Unavailable { path: dir.join(LOCK), source };
+        let file = OpenOptions::new().read(true).write(true).create(true).truncate(false).open(dir.join(LOCK)).map_err(unavailable)?;
+        match try_lock(&file) {
             Ok(()) => {}
             Err(TryLockError::WouldBlock) => {
                 let owner = std::fs::read(dir.join(OWNER)).ok().and_then(|b| serde_json::from_slice::<LockOwner>(&b).ok());
                 return Err(LockError::InUse(owner));
             }
-            Err(TryLockError::Error(e)) => return Ok(unlocked(e)),
+            Err(TryLockError::Error(e)) => return Err(unavailable(e)),
         }
         let owner = LockOwner::this_process(program);
         if let Ok(json) = serde_json::to_vec_pretty(&owner)
@@ -122,12 +124,12 @@ impl LibraryLock {
         {
             log::warn!("library {}: can't write {OWNER}: {e}", dir.display());
         }
-        Ok(LibraryLock { dir: dir.to_path_buf(), file: Some(file), held: true })
+        Ok(LibraryLock { dir: dir.to_path_buf(), file })
     }
 
-    /// The OS lock is held (`false`: the file system can't lock; opened unprotected).
+    /// A successfully acquired library lock always holds the OS lock.
     pub fn held(&self) -> bool {
-        self.held
+        true
     }
 
     pub fn dir(&self) -> &Path {
@@ -139,7 +141,7 @@ impl LibraryLock {
     /// test that uses it is Unix-only: `flock` semantics).
     #[cfg(all(test, unix))]
     pub(crate) fn descriptor_copy(&self) -> Option<File> {
-        self.file.as_ref().and_then(|f| f.try_clone().ok())
+        self.file.try_clone().ok()
     }
 }
 
@@ -150,13 +152,31 @@ impl Drop for LibraryLock {
     /// copy of every descriptor until it execs (issue #680). If the unlock fails the handle still
     /// closes right after, which releases the lock once every copy is gone, as before.
     fn drop(&mut self) {
-        if self.held {
-            let _ = std::fs::remove_file(self.dir.join(OWNER));
-            if let Some(f) = &self.file
-                && let Err(e) = f.unlock()
-            {
-                log::warn!("library {}: can't release {LOCK}: {e}", self.dir.display());
-            }
+        let _ = std::fs::remove_file(self.dir.join(OWNER));
+        if let Err(e) = self.file.unlock() {
+            log::warn!("library {}: can't release {LOCK}: {e}", self.dir.display());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn os_lock_errors_refuse_open_and_preserve_the_owner_note() {
+        let dir = std::env::temp_dir().join(format!("lc-lock-unsupported-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let note = b"existing owner";
+        std::fs::write(dir.join(OWNER), note).unwrap();
+        for kind in [io::ErrorKind::Unsupported, io::ErrorKind::PermissionDenied, io::ErrorKind::Other] {
+            let error = LibraryLock::acquire_using(&dir, "LightCraft", |_| Err(TryLockError::Error(io::Error::from(kind)))).unwrap_err();
+            assert!(matches!(error, LockError::Unavailable { source, .. } if source.kind() == kind));
+            assert_eq!(std::fs::read(dir.join(OWNER)).unwrap(), note);
+        }
+        let held = LibraryLock::acquire(&dir, "LightCraft").unwrap();
+        assert!(held.held(), "failed attempts did not retain a descriptor lock");
+        drop(held);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
