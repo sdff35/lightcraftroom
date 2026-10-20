@@ -1,6 +1,6 @@
 # Architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (`cargo xtask ci` reports the machine and skipped tests; `testkit`) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-20 · **Change:** minor (independent LightCraft Cloud foundation) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 How LightCraft is built today. The longer design document (`plan/architecture.md`) is local-only
 (`plan/` is gitignored); this page is the committed, current summary. Sizes are Rust lines counted
@@ -56,6 +56,19 @@ Every action is an engine command (id, label, menu path, shortcut, params, enabl
 the CLI, the JSON-lines control channel (`docs/control-protocol.md`) and MCP (`docs/mcp.md`) all
 dispatch by id, and headless snapshots render the UI without a window.
 
+## Independent cloud service
+
+`cloud/` is a separate Rust workspace: axum/tokio REST API, SQLx/PostgreSQL migrations,
+OIDC RS256 validation against an independent Keycloak realm, and UUID-addressed filesystem
+originals with SHA-256 and durable manifests. It does not depend on the desktop engine or GPU
+and does not share a catalog or credentials with Immich. The API, database, migration job and
+optimized Keycloak container have isolated Compose networks and persistent volumes.
+
+The implemented foundation handles libraries and one-shot original ingestion/download.
+Revisions, operation IDs and a transactional per-library changes table prepare future sync;
+client outboxes, resumable transfer, edit synchronization and preview workers are not implemented.
+See [cloud README](../cloud/README.md) for contracts, commands and constraints.
+
 ## Quality gates
 
 `cargo xtask ci`: fmt, clippy `-D warnings` with the never-crash lints, the HEIF build, tests,
@@ -77,5 +90,6 @@ the `lightcraft-gpu` tests once per backend with a hardware adapter (`LIGHTCRAFT
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-20 | minor | Add the independent cloud service, its implemented foundation and pending sync/render work. |
 | 2026-10-11 | minor | Quality gates: the CI machine probe, visible skips (`testkit`) and `target/ci/report.json` |
 | 2026-10-10 | major | Created from the code (crate sizes, layers, data model, rendering, control, gates) |

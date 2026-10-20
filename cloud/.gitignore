@@ -1,0 +1,6 @@
+/target/
+/.secrets/
+/.env
+/test-results/
+/dist/
+**/__pycache__/

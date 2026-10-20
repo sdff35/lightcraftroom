@@ -502,6 +502,13 @@ environment.systemPackages = [ pkgs.lightcraft ];           # home-manager: home
 <kbd>Shift</kbd>+<kbd>P</kbd> presets · <kbd>\\</kbd> original · <kbd>Y</kbd> before/after · <kbd>Z</kbd> zoom ·
 <kbd>J</kbd> clipping · <kbd>⌘Z</kbd> undo · <kbd>⌘/</kbd> all shortcuts.
 
+## Self-hosted cloud foundation
+
+[LightCraft Cloud](cloud/README.md) is an independent Rust API with PostgreSQL, Keycloak OIDC
+and immutable RAW/JPEG storage. Its isolated Compose stack can run behind an existing HTTPS
+proxy on Linux amd64/arm64. This is the server foundation: desktop/mobile sync, resumable
+transfers and previews remain separate implementation stages.
+
 ## How it's built
 
 An engine-first Cargo workspace of small, tested crates with enforced layering (`cargo xtask layers`): `geom`,

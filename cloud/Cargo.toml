@@ -1,0 +1,49 @@
+[package]
+name = "lightcraft-cloud"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# An independent server workspace: never pull PostgreSQL/HTTP into desktop or WASM.
+[workspace]
+
+[dependencies]
+axum = "0.8"
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+fs2 = "0.4"
+futures-util = "0.3"
+hex = "0.4"
+jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto"] }
+percent-encoding = "2"
+reqwest = { version = "0.12.28", default-features = false, features = ["json", "stream", "rustls-tls-webpki-roots-no-provider"] }
+rustls = { version = "0.23.46", default-features = false, features = ["std", "tls12"] }
+rustls-rustcrypto = "0.0.2-alpha"
+rustix = { version = "1", features = ["fs"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "chrono", "json", "migrate", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "net", "signal", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tower-http = { version = "0.6", features = ["trace", "catch-panic"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+
+[dev-dependencies]
+base64 = "0.22"
+rand = "0.8"
+rsa = { version = "0.9", features = ["pem"] }
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1

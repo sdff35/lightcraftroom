@@ -1,0 +1,7 @@
+.secrets
+.env
+target
+test-results
+.git
+dist
+**/__pycache__

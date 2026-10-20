@@ -1,0 +1,7 @@
+# Isolated development only: no public binding, no PostgreSQL host port.
+services:
+  lc-api:
+    ports: ['127.0.0.1:${LC_LOCAL_API_PORT:-18880}:8080']
+  lc-auth:
+    ports: ['127.0.0.1:${LC_LOCAL_AUTH_PORT:-18881}:8080']
+    volumes: [./.secrets/lightcraft-dev-realm.json:/opt/keycloak/data/import/lightcraft-realm.json:ro]

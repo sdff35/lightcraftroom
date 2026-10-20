@@ -1,0 +1,41 @@
+name: LightCraft Cloud
+on:
+  pull_request:
+    paths: ['cloud/**', '.github/workflows/cloud.yml']
+  push:
+    paths: ['cloud/**', '.github/workflows/cloud.yml']
+permissions:
+  contents: read
+jobs:
+  cloud:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      LC_COMPOSE_PROJECT: lightcraft-cloud-ci
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Toolchain and unit checks
+        working-directory: cloud
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --component rustfmt,clippy
+          cargo +1.95.0 fmt --all -- --check
+          cargo +1.95.0 clippy --locked --all-targets -- -D warnings
+          cargo +1.95.0 test --locked
+          python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Build and start isolated stack
+        working-directory: cloud
+        run: |
+          python3 scripts/init-local.py
+          docker compose -p "$LC_COMPOSE_PROJECT" -f compose.yaml -f compose.local.yaml up --build -d --wait
+          docker compose -p "$LC_COMPOSE_PROJECT" -f compose.yaml -f compose.local.yaml exec -T lc-api /lightcraft-cloud --version
+      - name: Real API, PKCE, PostgreSQL, upload and restart tests
+        working-directory: cloud
+        run: python3 tests/e2e.py
+      - name: Stop isolated stack
+        if: always()
+        working-directory: cloud
+        run: docker compose -p "$LC_COMPOSE_PROJECT" -f compose.yaml -f compose.local.yaml down

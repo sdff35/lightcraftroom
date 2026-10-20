@@ -1,0 +1,3 @@
+
+# SQLx embeds migration checksums; preserve identical bytes across developer platforms.
+cloud/migrations/*.sql text eol=lf

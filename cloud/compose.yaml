@@ -1,0 +1,140 @@
+name: lightcraft-cloud
+services:
+  lc-db:
+    image: postgres:17-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_bootstrap_password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    command: [postgres, -c, max_connections=40, -c, shared_buffers=128MB, -c, work_mem=4MB, -c, max_wal_size=512MB]
+    secrets: [pg_bootstrap_password, pg_migrator_password, pg_api_password, pg_auth_password]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/init-db.sh:/docker-entrypoint-initdb.d/10-lightcraft.sh:ro
+    networks: [backend]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U postgres -d postgres && test "$$(psql -U postgres -d postgres -Atc "SELECT version FROM lightcraft_bootstrap_complete")" = 1']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 1g
+    cpus: 0.5
+    pids_limit: 128
+    security_opt: [no-new-privileges:true]
+    logging: &logging
+      driver: json-file
+      options: {max-size: 10m, max-file: '3'}
+  lc-migrate:
+    image: ${LC_API_IMAGE:-lightcraft-cloud:local}
+    build: {context: .}
+    command: [--migrate]
+    depends_on:
+      lc-db: {condition: service_healthy}
+    environment: &api-env
+      LC_DB_HOST: lc-db
+      LC_DB_USER: lightcraft_migrator
+      LC_DB_PASSWORD_FILE: /run/secrets/pg_migrator_password
+      LC_OIDC_ISSUER: ${LC_OIDC_ISSUER:?Set LC_OIDC_ISSUER in .env}
+      LC_OIDC_JWKS_URL: ${LC_OIDC_JWKS_URL:-http://lc-auth:8080/realms/lightcraft/protocol/openid-connect/certs}
+      LC_ALLOW_HTTP_JWKS: ${LC_ALLOW_HTTP_JWKS:-true}
+      LC_ALLOW_HTTP_OIDC: ${LC_ALLOW_HTTP_OIDC:-false}
+      NO_PROXY: lc-db,lc-auth,localhost,127.0.0.1
+    secrets: [pg_migrator_password]
+    networks: [backend]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ['/tmp:size=16m,mode=1777']
+    mem_limit: 512m
+    cpus: 0.5
+    pids_limit: 64
+    logging: *logging
+  lc-auth:
+    image: ${LC_AUTH_IMAGE:-lightcraft-keycloak:local}
+    build: {context: ., dockerfile: Dockerfile.keycloak}
+    restart: unless-stopped
+    depends_on:
+      lc-db: {condition: service_healthy}
+    entrypoint: [/bin/bash, -ec]
+    command:
+      - |
+        export KC_DB_PASSWORD="$$(cat /run/secrets/pg_auth_password)"
+        export KC_BOOTSTRAP_ADMIN_PASSWORD="$$(cat /run/secrets/oidc_bootstrap_password)"
+        exec /opt/keycloak/bin/kc.sh start --optimized --import-realm
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://lc-db:5432/lightcraft_auth
+      KC_DB_USERNAME: lightcraft_auth
+      KC_BOOTSTRAP_ADMIN_USERNAME: lc-bootstrap
+      KC_HOSTNAME: ${LC_AUTH_PUBLIC_URL:?Set LC_AUTH_PUBLIC_URL in .env}
+      KC_HTTP_ENABLED: 'true'
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: 'true'
+      KC_DB_POOL_INITIAL_SIZE: '2'
+      KC_DB_POOL_MIN_SIZE: '2'
+      KC_DB_POOL_MAX_SIZE: '10'
+      JAVA_OPTS_KC_HEAP: -Xms128m -Xmx768m -XX:ActiveProcessorCount=2
+      NO_PROXY: lc-db,localhost,127.0.0.1
+    secrets: [pg_auth_password, oidc_bootstrap_password]
+    volumes: [./docker/realm-lightcraft.json:/opt/keycloak/data/import/lightcraft-realm.json:ro]
+    networks:
+      backend:
+      edge: {aliases: [lightcraft-auth]}
+    healthcheck:
+      test: [CMD, /bin/bash, -ec, 'exec 3<>/dev/tcp/127.0.0.1/9000; printf "GET /health/ready HTTP/1.0\r\n\r\n" >&3; IFS= read -r status <&3; [[ "$$status" == *" 200 "* ]]']
+      start_period: 180s
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    mem_limit: 1536m
+    cpus: 0.5
+    pids_limit: 256
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+  lc-api:
+    image: ${LC_API_IMAGE:-lightcraft-cloud:local}
+    build: {context: .}
+    restart: unless-stopped
+    depends_on:
+      lc-migrate: {condition: service_completed_successfully}
+      lc-auth: {condition: service_healthy}
+    environment:
+      <<: *api-env
+      LC_DB_USER: lightcraft_api
+      LC_DB_PASSWORD_FILE: /run/secrets/pg_api_password
+      LC_MAX_UPLOAD_BYTES: ${LC_MAX_UPLOAD_BYTES:-536870912}
+      LC_STORAGE_QUOTA_BYTES: ${LC_STORAGE_QUOTA_BYTES:?Set a measured LightCraft storage quota}
+      LC_MIN_FREE_BYTES: ${LC_MIN_FREE_BYTES:-21474836480}
+    secrets: [pg_api_password]
+    volumes: [originals:/data]
+    networks:
+      backend:
+      edge: {aliases: [lightcraft-api]}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ['/tmp:size=16m,mode=1777']
+    healthcheck:
+      test: [CMD, /lightcraft-cloud, --healthcheck]
+      start_period: 30s
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    stop_grace_period: 330s
+    mem_limit: 512m
+    cpus: 0.5
+    pids_limit: 64
+    logging: *logging
+volumes:
+  pgdata:
+  originals:
+networks:
+  backend: {internal: true}
+  edge:
+secrets:
+  pg_bootstrap_password: {file: ./.secrets/pg_bootstrap_password}
+  pg_migrator_password: {file: ./.secrets/pg_migrator_password}
+  pg_api_password: {file: ./.secrets/pg_api_password}
+  pg_auth_password: {file: ./.secrets/pg_auth_password}
+  oidc_bootstrap_password: {file: ./.secrets/oidc_bootstrap_password}
