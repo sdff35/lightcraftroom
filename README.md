@@ -509,6 +509,8 @@ and immutable RAW/JPEG storage. Its isolated Compose stack can run behind an exi
 proxy on Linux amd64/arm64. The desktop **Cloud Library** and **Settings → Cloud** connect to
 this API, sign in through the system browser with PKCE, store refresh tokens in the OS
 credential service, and upload/download verified originals. See the [desktop guide](docs/cloud-desktop.md).
+For a Windows x64 portable preview, use the dedicated Actions workflow and
+[Windows testing instructions](docs/windows-cloud-testing.md).
 Automatic synchronization, resumable transfers, albums and server previews remain separate stages.
 
 ## How it's built

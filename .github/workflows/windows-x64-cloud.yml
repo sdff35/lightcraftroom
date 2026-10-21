@@ -1,0 +1,100 @@
+name: Windows x64 Cloud preview
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, work, "codex/windows-cloud*"]
+    paths:
+      - ".github/workflows/windows-x64-cloud.yml"
+      - "packaging/windows/**"
+      - "docs/windows-cloud-testing.md"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "apps/lightcraft/**"
+      - "crates/**"
+
+# An unsigned testing artifact, independent of the signing/release environment.
+# No secrets, deployment, release publication, or external Cloud server is used.
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-x64-cloud-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: "-C target-feature=+crt-static"
+      CRAFT_FONTS_REQUIRED: "1"
+      LIGHTCRAFT_REQUIRE_WINRES: "1"
+      LIGHTCRAFT_BUILD_SHA: ${{ github.sha }}
+      RUST_TEST_THREADS: "2"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust and Windows target
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --no-self-update
+          if ($LASTEXITCODE -ne 0) { throw 'Rust installation failed' }
+          rustup default 1.95.0
+          if ($LASTEXITCODE -ne 0) { throw 'Rust selection failed' }
+          rustup target add x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { throw 'Windows target installation failed' }
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-cloud-x64-rust195-static
+      - name: Fetch pinned fonts and set build date
+        run: |
+          . ./packaging/windows/fonts.ps1
+          Initialize-CraftFonts $PWD.Path
+          "CRAFT_FONTS_DIR=$env:CRAFT_FONTS_DIR" >> $env:GITHUB_ENV
+          "LIGHTCRAFT_BUILD_DATE=$((Get-Date).ToUniversalTime().ToString('yyyy-MM-dd'))" >> $env:GITHUB_ENV
+      - name: Test Cloud client on Windows
+        run: |
+          cargo test --release --locked --target x86_64-pc-windows-msvc -p lightcraft-cloud-client
+          if ($LASTEXITCODE -ne 0) { throw 'Cloud client tests failed' }
+      - name: Test Cloud UI and local library navigation on Windows
+        run: |
+          cargo test --release --locked --target x86_64-pc-windows-msvc -p lightcraft-ui-egui --lib cloud::tests:: -- --skip cloud_real_backend_browser_upload_download_restart_and_logout
+          if ($LASTEXITCODE -ne 0) { throw 'Cloud UI tests failed' }
+      - name: Test Windows browser URL dispatch
+        run: |
+          cargo test --release --locked --target x86_64-pc-windows-msvc -p lightcraft --bin lightcraft windows_links_open_in_the_browser
+          if ($LASTEXITCODE -ne 0) { throw 'Browser dispatch test failed' }
+      - name: Build desktop with Cloud enabled
+        run: |
+          cargo build --release --locked --target x86_64-pc-windows-msvc -p lightcraft
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop build failed' }
+      - name: Smoke-test the actual executable
+        run: |
+          python packaging/windows/cloud-smoke.py --exe target/x86_64-pc-windows-msvc/release/lightcraft.exe --output target/windows-cloud-smoke
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop executable smoke test failed' }
+      - name: Package portable executable and checksums
+        run: |
+          ./packaging/windows/cloud-preview.ps1
+      - name: Upload Windows x64 download
+        uses: actions/upload-artifact@v4
+        with:
+          name: LightCraft-Cloud-windows-x64-${{ github.sha }}
+          path: dist/windows-cloud/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload executable smoke-test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LightCraft-Cloud-windows-x64-evidence-${{ github.sha }}
+          path: |
+            target/windows-cloud-smoke/*.png
+            target/windows-cloud-smoke/*.json
+            target/windows-cloud-smoke/*.log
+          if-no-files-found: ignore
+          retention-days: 14
