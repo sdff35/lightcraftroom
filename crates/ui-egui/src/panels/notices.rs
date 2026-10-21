@@ -47,6 +47,11 @@ pub fn may_close(app: &mut LightcraftApp) -> bool {
     if app.quit_confirmed {
         return true;
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    if app.cloud.busy {
+        app.quit_prompt = Some(QuitPrompt::Tasks(crate::i18n::tr("A Cloud operation is still running. Quitting interrupts it.").into()));
+        return false;
+    }
     // before the library is touched: a Cancel here keeps working with it
     let running = app.session.activity.running_cancellable();
     if !running.is_empty() {
@@ -132,6 +137,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         app.quit_prompt = None;
         if matches!(buttons[i].2, Choice::QuitAnyway) {
             app.session.activity.cancel_all();
+            #[cfg(not(target_arch = "wasm32"))]
+            app.cloud.cancel_for_exit();
             // unsaved changes still get their own question
             if may_close(app) {
                 app.ui.quit = true;

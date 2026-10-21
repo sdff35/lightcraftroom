@@ -333,6 +333,9 @@ impl LightTheme {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AppSettings {
+    /// Public server address only. Refresh tokens belong to the OS credential store.
+    pub cloud_server: String,
+    pub cloud_remember: bool,
     /// Library opened at launch when no `--library` is given (empty = the default location).
     pub library_path: String,
     /// Libraries opened recently, newest first (File ▸ Open Recent Library; at most
@@ -396,6 +399,8 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         AppSettings {
+            cloud_server: String::new(),
+            cloud_remember: true,
             library_path: String::new(),
             recent_libraries: Vec::new(),
             startup_view: StartupView::Last,

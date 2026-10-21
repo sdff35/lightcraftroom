@@ -349,6 +349,16 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
     if app.ui.dialog.is_some() {
         return;
     }
+    if app.cloud.open {
+        // Cloud has its own selection. Do not dispatch local photo ratings/navigation.
+        if !keyboard_owned(app, ctx) && ctx.input(|i| i.key_pressed(Key::Escape)) {
+            let _ = app.run("cloud.local", json!({}));
+        }
+        if ctx.input(|i| i.modifiers.command && i.key_pressed(Key::Comma)) {
+            let _ = app.run("cloud.settings", json!({}));
+        }
+        return;
+    }
     if app.recording_shortcut.is_none() && app.ui.name_edit.is_none() && crate::panels::person::handle_bulk_key(app, ctx) {
         return;
     }

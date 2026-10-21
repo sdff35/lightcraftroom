@@ -75,14 +75,22 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             }
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                if icon_button(ui, "sidebar", Icon::Sidebar, vec2(30.0, 30.0), app.ui.left_panel, true, crate::i18n::tr("Show/hide My Photos panel"))
-                    .clicked()
+                if icon_button(
+                    ui,
+                    "sidebar",
+                    Icon::Sidebar,
+                    vec2(30.0, 30.0),
+                    app.ui.left_panel,
+                    !app.cloud.open,
+                    crate::i18n::tr("Show/hide My Photos panel"),
+                )
+                .clicked()
                 {
                     let _ = app.run("view.leftPanel", json!({}));
                 }
                 ui.add_space(8.0);
                 if icon_button(ui, "back", Icon::Back, vec2(30.0, 30.0), false, true, crate::i18n::tr("Back")).clicked() {
-                    let _ = app.run("view.back", json!({}));
+                    let _ = app.run(if app.cloud.open { "cloud.local" } else { "view.back" }, json!({}));
                 }
                 icon_button(ui, "forward", Icon::Forward, vec2(30.0, 30.0), false, false, crate::i18n::tr("Forward"));
                 if !app.native_menu {
@@ -107,7 +115,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             );
             let mut child =
                 ui.new_child(egui::UiBuilder::new().max_rect(sr.shrink2(vec2(10.0, 4.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
-            let empty = app.ui.search.is_empty();
+            let empty = if app.cloud.open { app.cloud.filter.is_empty() } else { app.ui.search.is_empty() };
             if empty && !focused {
                 let g = child.painter().layout_no_wrap(crate::i18n::tr("Search Photos").into(), t.font(13.5), t.text_dim);
                 let w = g.size().x + 24.0;
@@ -115,7 +123,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 paint(child.painter(), Rect::from_min_size(pos2(x0, sr.center().y - 8.0), vec2(16.0, 16.0)), Icon::Search, t.text_dim);
                 child.painter().galley(pos2(x0 + 24.0, sr.center().y - g.size().y / 2.0), g, t.text_dim);
             }
-            let resp = crate::text_field::TextField::singleline("field:search", &mut app.ui.search)
+            let search = if app.cloud.open { &mut app.cloud.filter } else { &mut app.ui.search };
+            let resp = crate::text_field::TextField::singleline("field:search", search)
                 .label(crate::i18n::tr("Search Photos"))
                 .frame(false)
                 .width(sr.width() - 20.0)
@@ -123,42 +132,44 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 .text_color(t.text)
                 .show(&mut child)
                 .response;
-            if resp.changed() {
+            if resp.changed() && !app.cloud.open {
                 let q = app.ui.search.clone();
                 let _ = app.run("library.filter", json!({"text": q}));
             }
             // filter icon right of the search field
-            let fr = Rect::from_center_size(pos2(sr.right() + 22.0, sr.center().y), vec2(28.0, 28.0));
-            let fresp = ui.interact(fr, egui::Id::new("filter-btn"), Sense::click());
-            crate::widgets::announce(&fresp, crate::i18n::tr("Filters"));
-            register(ui.ctx(), "icon:filter", fr);
-            let filtering = app.session.filter != Default::default() || app.ui.filter_bar;
-            paint(
-                ui.painter(),
-                fr.shrink(6.0),
-                Icon::Filter,
-                if filtering {
-                    t.accent
-                } else if fresp.hovered() {
-                    t.text
+            if !app.cloud.open {
+                let fr = Rect::from_center_size(pos2(sr.right() + 22.0, sr.center().y), vec2(28.0, 28.0));
+                let fresp = ui.interact(fr, egui::Id::new("filter-btn"), Sense::click());
+                crate::widgets::announce(&fresp, crate::i18n::tr("Filters"));
+                register(ui.ctx(), "icon:filter", fr);
+                let filtering = app.session.filter != Default::default() || app.ui.filter_bar;
+                paint(
+                    ui.painter(),
+                    fr.shrink(6.0),
+                    Icon::Filter,
+                    if filtering {
+                        t.accent
+                    } else if fresp.hovered() {
+                        t.text
+                    } else {
+                        t.icon
+                    },
+                );
+                // badge: how many filters are on, even with the filter bar closed
+                let active = lightcraft_engine::filter_chips(&app.session.filter, &app.session.catalog).len();
+                if active > 0 {
+                    let c = fr.right_top() + vec2(-3.0, 8.0);
+                    ui.painter().circle_filled(c, 7.0, t.accent);
+                    ui.painter().text(c, Align2::CENTER_CENTER, active.to_string(), t.semibold(9.5), t.canvas);
+                }
+                let fresp = fresp.on_hover_text(if active > 0 {
+                    crate::i18n::tr_format!("Filter bar — {active} active filter{}", if active == 1 { "" } else { "s" }, active = active)
                 } else {
-                    t.icon
-                },
-            );
-            // badge: how many filters are on, even with the filter bar closed
-            let active = lightcraft_engine::filter_chips(&app.session.filter, &app.session.catalog).len();
-            if active > 0 {
-                let c = fr.right_top() + vec2(-3.0, 8.0);
-                ui.painter().circle_filled(c, 7.0, t.accent);
-                ui.painter().text(c, Align2::CENTER_CENTER, active.to_string(), t.semibold(9.5), t.canvas);
-            }
-            let fresp = fresp.on_hover_text(if active > 0 {
-                crate::i18n::tr_format!("Filter bar — {active} active filter{}", if active == 1 { "" } else { "s" }, active = active)
-            } else {
-                crate::i18n::tr("Filter bar").into()
-            });
-            if fresp.clicked() {
-                let _ = app.run("view.filterBar", json!({}));
+                    crate::i18n::tr("Filter bar").into()
+                });
+                if fresp.clicked() {
+                    let _ = app.run("view.filterBar", json!({}));
+                }
             }
             // right icons
             let mut x = full.right() - 18.0;
@@ -172,7 +183,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     n = n
                 )
             });
-            let cloud_tip = unsaved.as_deref().unwrap_or("Local library — no cloud account needed");
+            let cloud_tip = unsaved.as_deref().unwrap_or("Open LightCraft Cloud");
             // Import Photos… beside Export, always one click away, with the key it is bound to now
             let mac = ui.ctx().os() == egui::os::OperatingSystem::Mac;
             let import_tip = match crate::shortcuts::shortcut_of(&app.ui.settings.keymap, "file.addPhotos") {
@@ -181,19 +192,39 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             };
             for (id, icon, tip, cmd) in [
                 ("discord", Icon::Chat, "Join the ArtCraft community on Discord", "app.discord"),
-                ("cloud", Icon::Cloud, cloud_tip, ""),
+                ("cloud", Icon::Cloud, cloud_tip, "cloud.open"),
                 ("help", Icon::Help, "Keyboard shortcuts", "app.shortcuts"),
                 ("share", Icon::Share, "Export", "dialog.export"),
                 ("import", Icon::Plus, import_tip.as_str(), "file.addPhotos"),
                 ("bell", Icon::Bell, "Activity", "panel.activity"),
             ] {
+                if app.cloud.open && id == "bell" {
+                    continue;
+                }
+                let (tip, cmd) = if app.cloud.open {
+                    match id {
+                        "share" => ("Download original", "cloud.download"),
+                        "import" => ("Upload RAW / JPEG", "cloud.upload"),
+                        "cloud" => ("Cloud settings", "cloud.settings"),
+                        _ => (tip, cmd),
+                    }
+                } else {
+                    (tip, cmd)
+                };
+                let enabled = !cmd.starts_with("cloud.") || crate::cloud::enabled(app, cmd);
                 let r = Rect::from_center_size(pos2(x, full.center().y), vec2(28.0, 28.0));
-                let resp = ui.interact(r, egui::Id::new(("top", id)), Sense::click()).on_hover_text(crate::i18n::tr(tip));
+                let resp = ui
+                    .interact(r, egui::Id::new(("top", id)), if enabled { Sense::click() } else { Sense::hover() })
+                    .on_hover_text(crate::i18n::tr(tip));
                 crate::widgets::announce(&resp, crate::i18n::tr(tip));
                 register(ui.ctx(), format!("icon:{id}"), r);
                 let warn = id == "cloud" && unsaved.is_some();
-                let colour = if warn {
+                let colour = if !enabled {
+                    t.text_disabled
+                } else if warn {
                     t.caution
+                } else if id == "cloud" && app.cloud.open {
+                    t.accent
                 } else if resp.hovered() {
                     t.text
                 } else {

@@ -147,6 +147,13 @@ class CloudTests(unittest.TestCase):
         status,_,result=parsed('PUT',API+'/v1/photos/'+photo['id']+'/original',data,self.token(),{'Content-Type':photo['media_type']});self.assertEqual(status,expected);return result
     def test_health_authentication_and_scopes(self):
         self.assertEqual(parsed('GET',API+'/health/live')[0],200)
+        status,_,config=parsed('GET',API+'/v1/config')
+        self.assertEqual(status,200)
+        self.assertEqual(set(config),{'api_version','issuer','client_id','max_upload_bytes'})
+        self.assertEqual(config['api_version'],1)
+        self.assertEqual(config['issuer'],AUTH+'/realms/lightcraft')
+        self.assertEqual(config['client_id'],'lightcraft-desktop')
+        self.assertGreaterEqual(config['max_upload_bytes'],16)
         status,h,error=parsed('GET',API+'/v1/me');self.assertEqual(status,401);self.assertEqual(h['WWW-Authenticate'],'Bearer');self.assertEqual(error['error']['code'],'unauthorized')
         self.assertEqual(parsed('GET',API+'/v1/me',token='not.a.jwt')[0],401)
         token=self.token();parts=token.split('.');parts[2]=('B' if parts[2].startswith('A') else 'A')+parts[2][1:];self.assertEqual(parsed('GET',API+'/v1/me',token='.'.join(parts))[0],401)

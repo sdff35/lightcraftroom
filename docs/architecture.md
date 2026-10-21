@@ -1,6 +1,6 @@
 # Architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-20 · **Change:** minor (independent LightCraft Cloud foundation) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-21 · **Change:** minor (native LightCraft Cloud client and UI) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 How LightCraft is built today. The longer design document (`plan/architecture.md`) is local-only
 (`plan/` is gitignored); this page is the committed, current summary. Sizes are Rust lines counted
@@ -67,7 +67,13 @@ optimized Keycloak container have isolated Compose networks and persistent volum
 The implemented foundation handles libraries and one-shot original ingestion/download.
 Revisions, operation IDs and a transactional per-library changes table prepare future sync;
 client outboxes, resumable transfer, edit synchronization and preview workers are not implemented.
-See [cloud README](../cloud/README.md) for contracts, commands and constraints.
+The native L0 `cloud-client` crate implements HTTP/OIDC/PKCE and OS refresh-token storage.
+The L5 `ui-egui::cloud` adapter owns background workers, commands and a bounded thumbnail
+cache. It never serializes tokens into `UiState` or modifies the local editing catalog.
+Cloud Settings and the library grid use the existing egui theme, file dialogs, system browser
+and command dispatcher. Images currently come from verified originals, with embedded RAW
+JPEG previews when available; no server preview API or durable offline cache is claimed.
+See [cloud README](../cloud/README.md) and [desktop guide](cloud-desktop.md) for contracts, commands and constraints.
 
 ## Quality gates
 
@@ -90,6 +96,7 @@ the `lightcraft-gpu` tests once per backend with a hardware adapter (`LIGHTCRAFT
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-21 | minor | Add native Cloud library/settings UI, browser PKCE and OS credentials; automatic sync and server previews remain pending. Parity counts unchanged. |
 | 2026-10-20 | minor | Add the independent cloud service, its implemented foundation and pending sync/render work. |
 | 2026-10-11 | minor | Quality gates: the CI machine probe, visible skips (`testkit`) and `target/ci/report.json` |
 | 2026-10-10 | major | Created from the code (crate sizes, layers, data model, rendering, control, gates) |

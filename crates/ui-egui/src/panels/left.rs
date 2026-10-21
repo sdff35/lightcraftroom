@@ -613,6 +613,15 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 title.on_hover_text(l.dir.display().to_string());
             }
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let cloud = ui.add_sized([ui.available_width(), 32.0], egui::Button::new(crate::i18n::tr("Cloud Library")));
+            register(ui.ctx(), "button:openCloudLibrary", cloud.rect);
+            if cloud.clicked() {
+                let _ = app.run("cloud.open", json!({}));
+            }
+            ui.add_space(4.0);
+        }
         let counts = app.caches.counts(&app.session.catalog);
         let (total, picks, deleted) = (counts.total, counts.picks, counts.deleted);
         egui::ScrollArea::both().id_salt("left-scroll").auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {

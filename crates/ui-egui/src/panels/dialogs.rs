@@ -1506,7 +1506,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         }
     }
     // a dialog opened from inside this one (a button in Settings that shows a licence) takes its place
-    if app.ui.dialog.as_ref().is_some_and(|now| *now != at_start) {
+    if app.ui.dialog.as_ref() != Some(&at_start) {
         return;
     }
     app.ui.dialog = if close { None } else { Some(dlg) };

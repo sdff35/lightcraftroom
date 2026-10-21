@@ -22,6 +22,7 @@ use crate::widgets::register;
 /// (id, label) of the tabs, in order.
 pub const TABS: &[(&str, &str)] = &[
     ("general", "General"),
+    ("cloud", "Cloud"),
     ("import", "Import"),
     ("performance", "Performance"),
     ("display", "Display"),
@@ -51,6 +52,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String) {
     ui.separator();
     ui.add_space(2.0);
     match tab.as_str() {
+        "cloud" => crate::cloud::settings(app, ui),
         "import" => import_tab(app, ui, &t),
         "performance" => performance_tab(app, ui, &t),
         "display" => display_tab(app, ui, &t),

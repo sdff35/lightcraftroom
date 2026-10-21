@@ -631,6 +631,54 @@
           }
         }
       }
+    },
+    "/v1/config": {
+      "get": {
+        "operationId": "public_config",
+        "summary": "Public desktop connection configuration",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "No credentials; OIDC public client and upload limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "api_version",
+                    "issuer",
+                    "client_id",
+                    "max_upload_bytes"
+                  ],
+                  "properties": {
+                    "api_version": {
+                      "type": "integer",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "issuer": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "client_id": {
+                      "type": "string",
+                      "enum": [
+                        "lightcraft-desktop"
+                      ]
+                    },
+                    "max_upload_bytes": {
+                      "type": "integer",
+                      "minimum": 16,
+                      "maximum": 536870912
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

@@ -72,6 +72,25 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.compare", "Compare", Some("Shift+C"), "View"),
     ("view.survey", "Survey", Some("N"), "View"),
     ("view.people", "People", None, "View"),
+    ("cloud.open", "Cloud Library", None, "View"),
+    ("cloud.local", "Local Library", None, ""),
+    ("cloud.settings", "Cloud Settings…", None, ""),
+    ("cloud.configure", "Configure Cloud Server", None, ""),
+    ("cloud.check", "Test Cloud Connection", None, ""),
+    ("cloud.login", "Sign In to Cloud", None, ""),
+    ("cloud.logout", "Sign Out of Cloud", None, ""),
+    ("cloud.refresh", "Refresh Cloud Library", None, ""),
+    ("cloud.selectLibrary", "Select Cloud Library", None, ""),
+    ("cloud.createLibrary", "Create Cloud Library", None, ""),
+    ("cloud.selectPhoto", "Select Cloud Photo", None, ""),
+    ("cloud.upload", "Upload Cloud Originals", None, ""),
+    ("cloud.download", "Download Cloud Original", None, ""),
+    ("cloud.preview", "Load Cloud Image", None, ""),
+    ("cloud.cancel", "Cancel Cloud Operation", None, ""),
+    ("cloud.retry", "Retry Cloud Transfer", None, ""),
+    ("cloud.more", "Load More Cloud Photos", None, ""),
+    ("cloud.browser", "Open Cloud Sign-in Page", None, ""),
+    ("cloud.status", "Cloud Status", None, ""),
     ("view.person", "Show Person", None, ""),
     ("view.faceBoxes", "Face Boxes", None, "View"),
     ("view.focusPoint", "Show Focus Point", Some("Alt+F"), "View"),
@@ -409,6 +428,9 @@ fn theme_command(app: &mut LightcraftApp, p: &Value) -> Result<Value, String> {
 
 /// Handle UI commands; `None` means "not a UI command — send it to the engine".
 pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
+    if id.starts_with("cloud.") {
+        return Some(crate::cloud::command(app, id, p));
+    }
     if matches!(id, "ui.dock" | "ui.dock.reset") {
         return Some(crate::docking::command(app, id == "ui.dock.reset", p));
     }
@@ -2126,6 +2148,9 @@ fn thumb_size_view(app: &LightcraftApp) -> bool {
 }
 
 pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
+    if id.starts_with("cloud.") {
+        return crate::cloud::enabled(app, id);
+    }
     match id {
         "library.selectOnlyActive" => app.session.active().is_some(),
         "view.thumbSizeUp" | "view.thumbSizeDown" => thumb_size_view(app),

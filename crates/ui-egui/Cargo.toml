@@ -36,6 +36,12 @@ lightcraft-codecs = { workspace = true }
 lightcraft-faces = { workspace = true }
 lightcraft-merge = { workspace = true }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+lightcraft-cloud-client = { workspace = true }
+lightcraft-codecs = { workspace = true }
+lightcraft-raw = { workspace = true }
+tempfile = "3"
+
 [build-dependencies]
 serde_json = { workspace = true }
 toml = "1"

@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~14 points and ~340–600 h away
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-20 · **Change:** minor (independent self-hosted cloud foundation; parity estimates unchanged) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-21 · **Change:** minor (desktop Cloud Library; parity estimates unchanged) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 One-page summary of how close LightCraft is to Adobe Lightroom. Agents: read this, then pick work
 from [docs/gaps.md](docs/gaps.md). The full assessment, method and evidence are in
@@ -114,6 +114,7 @@ Ranked toward beta; detail in [docs/roadmap.md](docs/roadmap.md), gaps in [docs/
 
 ## Progress log
 
+- 2026-10-21: native Cloud Library and Settings → Cloud connect to the independent backend with browser PKCE, OS credential storage, paged photo grids and verified one-shot transfers. Automatic sync, resumable transfer, albums and server previews remain pending; [scope and verification](docs/cloud-desktop.md).
 - 2026-10-20: independent LightCraft Cloud server foundation (`cloud/`): own REST API, PostgreSQL migrations, Keycloak OIDC and immutable original storage. Desktop/mobile sync, resumable transfer and previews remain future stages; parity percentages are unchanged.
 
 - 2026-10-14: Camera-coverage sweep verifies 30 more models on 40 CC0 files, with file and sensor
@@ -185,6 +186,7 @@ Ranked toward beta; detail in [docs/roadmap.md](docs/roadmap.md), gaps in [docs/
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-21 | minor | Native Cloud library/settings UI and verified transfers; sync and server previews remain pending. Parity counts unchanged. |
 | 2026-10-12 | minor | Italian interface (`it`, #1192): 2,201 of 2,398 messages, locale, menu command and tests; headline numbers unchanged |
 | 2026-10-13 | minor | Sony ILCA-99M2 camera colour profile in the log; numbers unchanged |
 | 2026-10-14 | minor | Localization ~52% → ~55% (mean of the 12 key languages): de, es, fr, ja and uk catalogs filled |

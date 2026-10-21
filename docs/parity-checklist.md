@@ -1,6 +1,6 @@
 # Lightroom parity checklist
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-20 · **Change:** patch (preset durability, catalog locking and independent cloud scope) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-21 · **Change:** minor (desktop Cloud Library; Adobe parity counts unchanged) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 The measured, row-by-row checklist: one row per Lightroom feature, menu item and shortcut, what we
 have and what is missing. It answers *does the feature exist?* (feature breadth). Whether it is good
@@ -446,7 +446,7 @@ differences and missing bindings are in [ui-parity.md](ui-parity.md#shortcuts).
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-CLOUD-SYNC | Cloud sync | OOS | 🚫 | `cloud/README.md` | Adobe service integration remains outside this target-app assessment. Independent self-hosted LightCraft Cloud now has a server foundation; client synchronization, resumable transfers and previews remain pending. No claim of end-to-end cloud parity. |
+| LR-CLOUD-SYNC | Cloud sync | OOS | 🚫 | `cloud/README.md`, `docs/cloud-desktop.md`, `cmd:cloud.open`, `cmd:cloud.settings`, `cmd:cloud.upload`, `cmd:cloud.download` | Adobe service integration remains outside this target-app assessment. Independent LightCraft Cloud has a native library/settings UI, browser PKCE, OS credentials and verified one-shot transfers; automatic synchronization, resumable transfers and server previews remain pending. No claim of end-to-end cloud parity. |
 | LR-CLOUD-SMARTPREVIEW | Editable proxies | P2 | ✅ | `cmd:library.smartPreviews`, `cmd:library.smartPreviewsLocation`, `cmd:photo.smartPreview`, `crates/engine/src/smart.rs`, `crates/ui-egui/src/panels/settings.rs` | File ▸ Previews ▸ Build / Discard Smart Previews (on a worker thread, progress and Stop like Build Previews): ~1 MB proxies in the library; with the original offline the photo renders, edits and exports (at proxy size) from its proxy; Info shows the status; the proxy folder is chosen per library (Settings → Performance → Smart previews, saved in the library): the effective path, count and size are shown, changing it needs a choice for the proxies already built (move / leave / delete), and an unavailable or unwritable folder is an error, never a fallback to the library drive; proxies are written atomically and a damaged one (cut short by a crash or a full drive) doesn't count as built, is rebuilt (`repaired`) and is never moved over a good one (issue #106). Each proxy records the version of the camera-look fit that wrote it (`look_version`, `LOOK_VERSION` in `crates/engine/src/camera_preview.rs`, bumped whenever the fit changes); only raws with the per-file camera look go stale (JPEG / PNG / DNG proxies are never rebuilt for it); one from an older fit is rebuilt from its original by a background scan the first time the library is opened at a new version (a `look-version` marker in the proxy folder keeps it to once per version) and by Build Smart Previews, and kept as it is while the original is offline (`docs/camera-preview-colour.md`). The thumbnail cache stays in the library |
 | LR-AI-UPDATE-INDICATOR | AI-settings update indicator | P2 | ⬜ | | |
 | LR-AI-CREDITS | Generative credits | OOS | 🚫 | | |
@@ -797,6 +797,7 @@ Latin stays upright. Advanced Japanese composition remains open. Regression cove
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-21 | minor | Add native Cloud library/settings UI, browser PKCE and OS credentials; automatic sync and server previews remain pending. Parity counts unchanged. |
 | 2026-10-20 | patch | Explain independent cloud foundation beside the OOS Adobe-service row; feature counts unchanged. |
 | 2026-10-20 | patch | LC-01/02/03: preset save errors/retry/quit protection, persistent ID allocation and duplicate repair, fail-closed catalog locks. Feature counts unchanged. |
 | 2026-10-14 | patch | LR-EXP-TYPE: opaque 8-bit PNG/TIFF/WebP use RGB; transparent exports retain alpha (#1670). Statuses and feature counts unchanged. |

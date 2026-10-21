@@ -10,6 +10,7 @@ pub mod album_picker;
 pub mod brush_live;
 pub mod button;
 pub mod canvas_keys;
+pub mod cloud;
 mod command_error;
 pub mod control;
 pub mod credits;
@@ -337,6 +338,8 @@ impl QuitPrompt {
 }
 
 pub struct LightcraftApp {
+    /// Native Cloud workspace; credentials are never part of serializable UI state.
+    pub cloud: cloud::State,
     pub(crate) model_setup: model_setup::Pending,
     /// Per-catalog-revision caches of library-wide results the panels show every frame
     /// (expensive on big libraries).
@@ -485,6 +488,7 @@ impl LightcraftApp {
         // AI mask requests run on the model's worker; frames apply their results (never wait)
         session.segmenter.background = true;
         Self {
+            cloud: cloud::State::default(),
             session,
             ui: UiState::default(),
             services,
@@ -599,6 +603,15 @@ impl LightcraftApp {
     /// [`LightcraftApp::run`], keeping what kind of error a refusal is: for code that decides on it
     /// (offer a model's download, treat a cancel as one) instead of reading the message.
     pub fn run_typed(&mut self, id: &str, params: Value) -> Result<Value, CommandError> {
+        // Cloud selection is independent of the local catalog. Hidden local selections must
+        // never be changed by photo shortcuts or menu actions while Cloud is on screen.
+        if self.cloud.open
+            && !id.starts_with("cloud.")
+            && !id.starts_with("app.")
+            && !matches!(id, "view.appearance" | "view.leftPanel" | "panel.activity")
+        {
+            return Err(CommandError::from("Switch to Local Library to use editor commands.".to_string()));
+        }
         if let Some(result) = model_setup::intercept(self, id, &params) {
             return result.map_err(CommandError::from);
         }
@@ -1204,6 +1217,7 @@ impl LightcraftApp {
             self.ui.known_cards = None;
         }
         self.session.persist_if_dirty();
+        cloud::pump(self, ctx);
         panels::denoise::pump(self, ctx);
         model_setup::pump(self, ctx);
         panels::faces::pump(self, ctx);
@@ -1217,6 +1231,14 @@ impl LightcraftApp {
         {
             let dropped: Vec<String> =
                 ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_string_lossy().to_string()).filter(|p| !p.is_empty()).collect());
+            if self.cloud.open {
+                if !dropped.is_empty()
+                    && let Err(e) = self.run("cloud.upload", serde_json::json!({"paths":dropped}))
+                {
+                    self.toast_error(ctx, e);
+                }
+                return;
+            }
             // preset files import as presets, everything else as photos
             // a dropped face model opens its licence dialog; presets and photos as before
             let (models, dropped): (Vec<String>, Vec<String>) = dropped.into_iter().partition(|p| is_model_file(p));
@@ -1453,6 +1475,15 @@ impl LightcraftApp {
         // Order matters: earlier panels take the full edge (top bar spans the window; the tool strip,
         // right panels and left panel run to the bottom; the bottom bar sits between them).
         panels::topbar::show(self, ui);
+        if self.cloud.open {
+            cloud::show(self, ui);
+            panels::notices::show(self, &ctx);
+            panels::dialogs::show(self, &ctx);
+            panels::toast(self, &ctx);
+            self.widgets = widgets::take_registry(&ctx);
+            self.end_frame(&ctx, t0);
+            return;
+        }
         panels::library_problem::banner(self, ui);
         panels::strip::show(self, ui);
         // filled: the gaps the dock leaves between its panes show chrome, not the dark clear colour

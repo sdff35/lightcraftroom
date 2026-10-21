@@ -57,6 +57,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health/live", get(|| async { Json(json!({"status":"ok"})) }))
         .route("/health/ready", get(ready))
+        .route("/v1/config", get(public_config))
         .merge(protected)
         .fallback(no_route)
         .method_not_allowed_fallback(no_method)
@@ -70,6 +71,9 @@ pub fn router(state: AppState) -> Router {
             ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "The request could not be completed").into_response()
         }))
         .with_state(state)
+}
+async fn public_config(State(s): State<AppState>) -> Json<Value> {
+    Json(json!({"api_version":1,"issuer":s.config.issuer,"client_id":"lightcraft-desktop","max_upload_bytes":s.config.max_upload}))
 }
 async fn ready(State(s): State<AppState>) -> Result<Json<Value>> {
     sqlx::query("SELECT 1").execute(&s.pool).await?;

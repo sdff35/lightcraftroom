@@ -1,0 +1,28 @@
+[package]
+name = "lightcraft-cloud-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Native LightCraft Cloud HTTP, PKCE and OS credential storage (L0)"
+
+[lints]
+workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+reqwest = { version = "0.12.28", default-features = false, features = ["blocking", "json", "rustls-tls-webpki-roots-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
+rustls-rustcrypto = "0.0.2-alpha"
+jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }
+base64 = "0.22"
+getrandom = "0.3"
+uuid = { version = "1", features = ["v4", "serde"] }
+zeroize = "1"
+tempfile = "3"
+fs2 = "0.4"
+keyring = { version = "3.6.3", default-features = false, features = ["apple-native", "windows-native", "async-secret-service", "async-io", "crypto-rust"] }
+
+[dev-dependencies]
+lightcraft-testkit = { workspace = true }

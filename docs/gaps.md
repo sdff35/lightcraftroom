@@ -1,6 +1,6 @@
 # Gaps: where LightCraft falls short of Lightroom
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-20 · **Change:** minor (independent cloud foundation and persistence fixes)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-21 · **Change:** minor (desktop Cloud Library and secure sign-in)
 
 Every known shortfall, one entry each, ranked by user impact (how many Lightroom users hit it, and
 how hard it blocks them), then by effort. **Agents pick work from the top** (the first entry nobody is
@@ -60,6 +60,7 @@ Beta-blocking gaps (B) total **~230–430 h**; with the stability and platform w
 
 ## Closed recently (kept for calibration)
 
+- 2026-10-21: the desktop can now browse independent Cloud libraries and transfer verified RAW/JPEG originals with browser PKCE and OS credential storage. Automatic synchronization, durable offline cache, editing sync, albums and server previews remain open; see [desktop scope](cloud-desktop.md).
 - 2026-10-20: independent self-hosted cloud foundation added under `cloud/`: API, PostgreSQL, OIDC, immutable original storage. This does not close desktop synchronization or preview gaps and does not change Lightroom readiness estimates.
 
 - 2026-10-20: audit findings LC-01/02/03: failed preset saves are reported and retried, preset IDs remain unique after deletions/reopening, and a library refuses writable open without an exclusive lock. Existing duplicate presets are retained and assigned distinct IDs. Regression coverage includes storage failures and quit/retry; see [persistence fixes](persistence-fixes.md). Readiness estimates unchanged.
@@ -81,6 +82,7 @@ Beta-blocking gaps (B) total **~230–430 h**; with the stability and platform w
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-21 | minor | Add native Cloud library/settings UI, browser PKCE and OS credentials; automatic sync and server previews remain pending. Parity counts unchanged. |
 | 2026-10-20 | minor | Independent self-hosted backend foundation; client sync and preview gaps remain open. |
 | 2026-10-20 | patch | Record LC-01/02/03 fixes and regression coverage; no feature-count or readiness estimate change. |
 | 2026-10-18 | patch | Gap 1: six X-Trans CMOS 4 Fujifilm bodies (X-T30 …) take the X-T3's spectral matrices instead of the neutral matrix |

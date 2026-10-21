@@ -56,6 +56,7 @@ remain valid until its expiry after session revocation; refresh is enforced by K
 |---|---|---|
 | GET | `/health/live` | Process liveness, public |
 | GET | `/health/ready` | PostgreSQL, storage and OIDC key readiness, public |
+| GET | `/v1/config` | Public API version, OIDC issuer, desktop client ID and upload limit; no secrets |
 | GET | `/v1/me` | Authenticated identity and scopes |
 | POST / GET | `/v1/libraries` | Create / list the owner's libraries |
 | GET | `/v1/libraries/{id}` | Read one owned library |
@@ -69,6 +70,12 @@ remain valid until its expiry after session revocation; refresh is enforced by K
 Lists use `after=<UUID>&limit=1..100`, with `items` and `next_after`. Another owner's resources
 return 404. Errors use `{"error":{"code":"...","message":"..."}}`, with no credentials or SQL
 in responses. Useful statuses: 401, 403, 404, 409, 411, 413, 415, 422, 429, 503 and 507.
+
+The native [Cloud Library](../docs/cloud-desktop.md) now consumes these endpoints. Its own
+server address is configured in Settings → Cloud. Deploy the API version containing
+`/v1/config` before connecting the desktop; the existing `lightcraft-desktop` Keycloak public
+client uses PKCE S256 and the loopback callback `http://127.0.0.1:47861/callback`. No client
+secret belongs in the desktop. The callback listener exists only during sign-in.
 
 Create a library with `{"name":"My photos"}`. Register an original before sending bytes:
 

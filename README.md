@@ -323,7 +323,7 @@ lightcraft --control 7980 ~/Pictures/trip
   through a shoot takes ~50 ms per photo.
 - **Background rendering.** A worker pool renders the loupe, before/after and every visible thumbnail off the UI
   thread: drafts during drags, full quality on release.
-- **Local-first.** No account, no cloud, no telemetry, no subscription. Your catalog is an append-only log of
+- **Local-first.** Local editing needs no account or subscription and sends no telemetry. Your catalog is an append-only log of
   human-readable operations you can diff, back up or replay.
 
 <br>
@@ -502,12 +502,14 @@ environment.systemPackages = [ pkgs.lightcraft ];           # home-manager: home
 <kbd>Shift</kbd>+<kbd>P</kbd> presets · <kbd>\\</kbd> original · <kbd>Y</kbd> before/after · <kbd>Z</kbd> zoom ·
 <kbd>J</kbd> clipping · <kbd>⌘Z</kbd> undo · <kbd>⌘/</kbd> all shortcuts.
 
-## Self-hosted cloud foundation
+## Self-hosted LightCraft Cloud
 
 [LightCraft Cloud](cloud/README.md) is an independent Rust API with PostgreSQL, Keycloak OIDC
 and immutable RAW/JPEG storage. Its isolated Compose stack can run behind an existing HTTPS
-proxy on Linux amd64/arm64. This is the server foundation: desktop/mobile sync, resumable
-transfers and previews remain separate implementation stages.
+proxy on Linux amd64/arm64. The desktop **Cloud Library** and **Settings → Cloud** connect to
+this API, sign in through the system browser with PKCE, store refresh tokens in the OS
+credential service, and upload/download verified originals. See the [desktop guide](docs/cloud-desktop.md).
+Automatic synchronization, resumable transfers, albums and server previews remain separate stages.
 
 ## How it's built
 
