@@ -17,11 +17,12 @@ if ([BitConverter]::ToUInt32($Bytes, $Pe) -ne 0x4550 -or
   throw 'Expected a Windows x64 GUI executable'
 }
 
-$Name = "lightcraft-cloud-windows-x64-$($Sha.Substring(0, 7))"
-$Stage = Join-Path $Root "target/windows-cloud-package/$Name"
-$Dist = Join-Path $Root 'dist/windows-cloud'
-New-Item -ItemType Directory -Force -Path $Stage, $Dist | Out-Null
-Copy-Item -LiteralPath $Exe -Destination $Stage
+$Stage = Join-Path $Root 'dist/windows-cloud/portable'
+# This fixed directory contains only generated packaging output; never carry files
+# from a previous build into the downloadable artifact.
+if (Test-Path -LiteralPath $Stage) { Remove-Item -LiteralPath $Stage -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $Stage | Out-Null
+Copy-Item -LiteralPath $Exe -Destination (Join-Path $Stage 'LightCraft.exe')
 foreach ($File in 'LICENSE-MIT', 'LICENSE-APACHE', 'NOTICE') {
   Copy-Item -LiteralPath (Join-Path $Root $File) -Destination $Stage
 }
@@ -38,9 +39,9 @@ $Info = [ordered]@{
   online_login_test = 'Not run in this workflow; requires a separate HTTPS Backend/Keycloak'
 }
 $Info | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Stage 'BUILD-INFO.json') -Encoding utf8
-$Zip = Join-Path $Dist "$Name.zip"
-Compress-Archive -Path $Stage -DestinationPath $Zip -Force
-"$((Get-FileHash -LiteralPath $Zip -Algorithm SHA256).Hash.ToLowerInvariant())  $Name.zip" |
-  Set-Content -LiteralPath (Join-Path $Dist 'SHA256SUMS.txt') -Encoding ascii
-Copy-Item -LiteralPath (Join-Path $Stage 'BUILD-INFO.json') -Destination $Dist
-Write-Output "Prepared $Zip (unsigned preview, commit $Sha)"
+# upload-artifact creates the downloadable ZIP; its root contains LightCraft.exe.
+$Checksums = @(Get-ChildItem -LiteralPath $Stage -File | Sort-Object Name | ForEach-Object {
+  "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
+})
+$Checksums | Set-Content -LiteralPath (Join-Path $Stage 'SHA256SUMS.txt') -Encoding ascii
+Write-Output "Prepared $Stage (unsigned x64 preview, commit $Sha)"

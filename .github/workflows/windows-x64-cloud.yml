@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   desktop:
-    runs-on: windows-2022
+    runs-on: windows-latest
     timeout-minutes: 120
     defaults:
       run:
@@ -40,6 +40,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      # The hosted Windows image includes Visual Studio and the Windows SDK.
+      # Put their x64 linker/resource tools on PATH and select the matching SDK.
+      - name: Configure MSVC x64 and Windows SDK
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Verify Windows build tools
+        run: |
+          Get-Command cl.exe, link.exe, rc.exe | Select-Object Name, Source
+      - name: Install Python for executable smoke test
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Install pinned Rust and Windows target
         run: |
           rustup toolchain install 1.95.0 --profile minimal --no-self-update
@@ -83,8 +96,8 @@ jobs:
       - name: Upload Windows x64 download
         uses: actions/upload-artifact@v4
         with:
-          name: LightCraft-Cloud-windows-x64-${{ github.sha }}
-          path: dist/windows-cloud/*
+          name: LightCraft-Cloud-windows-x64
+          path: dist/windows-cloud/portable/*
           if-no-files-found: error
           retention-days: 14
       - name: Upload executable smoke-test evidence

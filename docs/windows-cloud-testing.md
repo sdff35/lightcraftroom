@@ -5,11 +5,19 @@
 Cloud входить до звичайної native-збірки: окремий feature flag не потрібний.
 Ціль — Windows 10/11 x64 (`x86_64-pc-windows-msvc`), не Windows ARM64 чи x86.
 
+Точні назви: workflow **Windows x64 Cloud preview**, файл
+`.github/workflows/windows-x64-cloud.yml`, гілка для публікації **codex/windows-cloud**,
+downloadable artifact **LightCraft-Cloud-windows-x64**. Після розпакування запускайте
+**LightCraft.exe**. Якщо гілка вже опублікована, одразу відкрийте її run в Actions;
+команди перенесення вихідного коду нижче повторювати не потрібно.
+
 ## Поточний статус
 
 Windows executable ще потрібно зібрати. У Codex на момент підготовки цих інструкцій
-був Linux executable; Windows runner відсутній, а запити GitHub Actions/Releases
-повертали `Forbidden`. Наявність завантажуваного Windows-артефакту з Cloud не підтверджена.
+був Linux executable; Windows runner відсутній, а запити GitHub API
+повертали `Forbidden`. Це не означає відсутність доступу через Git: публікація гілки
+перевіряється окремим `git push`. Наявність завантажуваного Windows-артефакту з Cloud
+визначається результатом run у GitHub Actions.
 Наведений нижче workflow підготовлений для запуску в GitHub, але його Windows-результат
 не слід вважати перевіреним, доки конкретний run не стане зеленим.
 
@@ -54,26 +62,33 @@ Windows executable ще потрібно зібрати. У Codex на моме�
    гілка → Run workflow**. GitHub показує ручну кнопку після появи workflow в default
    branch; до цього використовуйте запуск від push у зазначену гілку.
 4. Дочекайтеся зеленого job `desktop`. Перевірте SHA коміту у run: він повинен включати
-   Cloud та цей workflow. Збірка запускається на `windows-2022`, Rust 1.95.0, з pinned
+   Cloud та цей workflow. Release-збірка запускається на `windows-latest`, Rust 1.95.0,
+   із налаштованими MSVC x64 / Windows SDK, Python 3.12 для smoke-тесту, pinned
    craft-fonts, `Cargo.lock` та статичною CRT. Сертифікати підпису й серверні секрети
    не потрібні. Workflow має лише `contents: read` і нічого не розгортає.
-5. Унизу run, у **Artifacts**, завантажте **LightCraft-Cloud-windows-x64-<повний SHA>**.
+5. Унизу run, у **Artifacts**, завантажте **LightCraft-Cloud-windows-x64**.
    Артефакти зберігаються 14 днів; для завантаження потрібен вхід у GitHub.
    Не плутайте його з артефактом `...-evidence-...`, який містить звіт і скриншоти.
 6. Розпакуйте ZIP артефакту GitHub. Усередині будуть:
 
-   - `lightcraft-cloud-windows-x64-<короткий SHA>.zip` — portable-програма;
-   - `SHA256SUMS.txt` — SHA-256 цього ZIP;
-   - `BUILD-INFO.json` — точний commit, ціль та SHA-256 executable.
+   - **`LightCraft.exe`** — готова portable-програма; подвійний клік запускає її;
+   - `SHA256SUMS.txt` — SHA-256 файлів пакета;
+   - `BUILD-INFO.json` — точний commit, ціль та SHA-256 executable;
+   - `START-HERE.md`, ліцензії програми та `FONT-LICENCES.txt`.
+
+   Вкладеного ZIP немає. Шрифти вбудовані у програму, CRT скомпонована статично;
+   додаткове встановлення Visual C++ Redistributable для цієї збірки не потрібне.
 
 Перевірка у PowerShell, відкритому в цій папці:
 
 ```powershell
-$line = (Get-Content .\SHA256SUMS.txt -Raw).Trim() -split '\s+', 2
-$actual = (Get-FileHash -LiteralPath $line[1] -Algorithm SHA256).Hash
-if ($actual -ne $line[0]) { throw 'SHA-256 ZIP не збігається' }
-Expand-Archive -LiteralPath $line[1] -DestinationPath .\LightCraftCloudTest
-$exe = Get-ChildItem .\LightCraftCloudTest -Recurse -Filter lightcraft.exe | Select-Object -First 1
+foreach ($line in Get-Content .\SHA256SUMS.txt) {
+  $entry = $line -split '\s+', 2
+  if ((Get-FileHash -LiteralPath $entry[1] -Algorithm SHA256).Hash -ne $entry[0]) {
+    throw "SHA-256 не збігається: $($entry[1])"
+  }
+}
+$exe = Get-Item .\LightCraft.exe
 $info = Get-Content (Join-Path $exe.DirectoryName 'BUILD-INFO.json') -Raw | ConvertFrom-Json
 if ((Get-FileHash $exe.FullName -Algorithm SHA256).Hash -ne $info.executable_sha256) {
   throw 'SHA-256 executable не збігається'
@@ -168,8 +183,8 @@ GitHub runner після завантаження гілки.
 Для особистого тестування достатньо Actions artifact; workflow не створює Release.
 Після зеленого run maintainer може створити **draft prerelease** у
 <https://github.com/sdff35/lightcraftroom/releases/new>, вибрати **той самий commit**,
-окремий тег на кшталт `cloud-preview-<короткий SHA>` й додати portable ZIP,
-`SHA256SUMS.txt` та `BUILD-INFO.json` із цього run. Після перевірки можна опублікувати
+окремий тег на кшталт `cloud-preview-<короткий SHA>` й додати завантажений ZIP артефакту.
+`SHA256SUMS.txt` та `BUILD-INFO.json` містяться всередині нього. Після перевірки можна опублікувати
 prerelease вручну; це не розгортання Backend. Звичайний upstream Release або старий
 `0.9.1` не доводить наявності Cloud — перевіряйте commit.
 
